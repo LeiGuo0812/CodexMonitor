@@ -18,7 +18,11 @@ public sealed partial class WidgetWindow : Window
     private readonly AppRuntime _runtime;
     private readonly TaskbarPositioner _positioner = new();
     private readonly DispatcherTimer _positionTimer = new();
-    private readonly DispatcherTimer _countdownTimer = new();
+    private readonly WidgetPresentationCache _presentationCache = new();
+    private WidgetPresentation? _presentation;
+    private bool _measureNeeded = true;
+    private int _appearanceReadCount;
+    private int _measurements;
     private MonitorViewState _state;
     private MonitorSettings _settings;
     private Point _lastCursor;
@@ -72,7 +76,6 @@ public sealed partial class WidgetWindow : Window
             _hoverAnimation?.Stop();
             _shellEvents.Dispose();
             _positionTimer.Stop();
-            _countdownTimer.Stop();
             SystemBackdrop = null;
             _nativeSurface.Dispose();
         };
@@ -80,16 +83,19 @@ public sealed partial class WidgetWindow : Window
         _positionTimer.Interval = TimeSpan.FromSeconds(1);
         _positionTimer.Tick += (_, _) =>
         {
-            if (_dragging) return;
-            _positioner.Update(_settings);
+            if (!_dragging) _positioner.Update(_settings);
             if (_positioner.HiddenForFullscreen) SetHovered(false);
+            TaskbarAppearance.Read();
+            if (_appearanceReadCount != TaskbarAppearance.ReadCount)
+            {
+                _appearanceReadCount = TaskbarAppearance.ReadCount;
+                _runtime.RefreshSystemAppearance();
+            }
+            if (!_positioner.HiddenForFullscreen) UpdatePresentation();
             UpdateTaskbarAppearance();
         };
         _positionTimer.Start();
 
-        _countdownTimer.Interval = TimeSpan.FromSeconds(1);
-        _countdownTimer.Tick += (_, _) => UpdatePresentation();
-        _countdownTimer.Start();
         ApplySettings(_settings);
         UpdatePresentation();
     }
@@ -103,7 +109,7 @@ public sealed partial class WidgetWindow : Window
     public void Update(MonitorViewState state)
     {
         _state = state;
-        UpdatePresentation();
+        if (!_positioner.HiddenForFullscreen) UpdatePresentation();
     }
 
     internal object ReadVerification()
@@ -143,6 +149,7 @@ public sealed partial class WidgetWindow : Window
             SystemTaskbarDark = _appearance?.Dark,
             SystemHighContrast = _appearance?.HighContrast,
             PaletteSignature = $"{_appearance?.Background}/{_appearance?.Foreground}/{_appearance?.Secondary}",
+            TextMeasurements = _measurements,
             _positioner.IsTaskbarSlot
         };
     }
@@ -152,9 +159,11 @@ public sealed partial class WidgetWindow : Window
         if (_settings.PositionMode != settings.PositionMode || _settings.HorizontalOffsetDip != settings.HorizontalOffsetDip ||
             _settings.VerticalOffsetDip != settings.VerticalOffsetDip) _positioner.ResetPlacement();
         _settings = settings;
-        UpdateTaskbarAppearance();
+        _measureNeeded |= MainLine.FontSize != settings.FontSize;
         MainLine.FontSize = settings.FontSize;
         UpdatePresentation();
+        if (!_dragging) _positioner.Update(_settings);
+        UpdateTaskbarAppearance();
     }
 
     private void UpdateTaskbarAppearance()
@@ -164,7 +173,8 @@ public sealed partial class WidgetWindow : Window
         var clear = _positioner.IsTaskbarSlot && !appearance.HighContrast && _nativeSurface.DwmResult >= 0;
         var accent = appearance.HighContrast ? appearance.Foreground :
             WindowAppearance.ParseColor(WindowAppearance.Colors(_settings).Accent, Colors.Blue);
-        WindowTag.Foreground = new SolidColorBrush(accent);
+        if (WindowTag.Foreground is not SolidColorBrush tag || tag.Color != accent)
+            WindowTag.Foreground = new SolidColorBrush(accent);
         // Uniform, lower-intensity light along the spindle. Geometry tapers the ends;
         // horizontal low-alpha skirts supply the glow without a harsh white hotspot.
         var glow = Color.FromArgb(140, (byte)((accent.R + 7 * 255) / 8),
@@ -175,14 +185,15 @@ public sealed partial class WidgetWindow : Window
             LeftOuterGlow.Fill = RightOuterGlow.Fill = SoftEdgeGlow(glow, 20);
             LeftInnerGlow.Fill = RightInnerGlow.Fill = SoftEdgeGlow(glow, 32);
         }
-        var state = WidgetPresentationBuilder.Create(_state.Selection, DateTimeOffset.Now,
-            _state.LastSuccessfulUpdate, _state.QueryError).StateMarker;
-        StateMarker.Foreground = new SolidColorBrush(appearance.HighContrast ? appearance.Foreground : state switch
+        var state = _presentation?.StateMarker;
+        var stateColor = appearance.HighContrast ? appearance.Foreground : state switch
         {
             "已连接" => Color.FromArgb(255, 49, 150, 108),
             "数据陈旧" => Color.FromArgb(255, 201, 139, 46),
             _ => Color.FromArgb(255, 188, 72, 68)
-        });
+        };
+        if (StateMarker.Foreground is not SolidColorBrush marker || marker.Color != stateColor)
+            StateMarker.Foreground = new SolidColorBrush(stateColor);
         if (appearance == _appearance && clear == _clearBackground) return;
         _appearance = appearance;
         _clearBackground = clear;
@@ -222,7 +233,7 @@ public sealed partial class WidgetWindow : Window
         _hoverAnimation?.Stop();
         var target = hovered ? 1.0 : 0.0;
         ApplyHoverOpacity(from);
-        if (!new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
+        if (!TaskbarAppearance.Animations)
         {
             ApplyHoverOpacity(target);
             _hoverAnimation = null;
@@ -269,14 +280,27 @@ public sealed partial class WidgetWindow : Window
 
     private void UpdatePresentation()
     {
-        var presentation = WidgetPresentationBuilder.Create(_state.Selection, DateTimeOffset.Now,
+        if (_closed) return;
+        var presentation = _presentationCache.Get(_state.Selection, DateTimeOffset.Now,
             _state.LastSuccessfulUpdate, _state.QueryError);
-        MainLine.Text = presentation.MainLine;
-        WindowTag.Text = presentation.WindowTag;
-        WindowTag.Visibility = string.IsNullOrEmpty(presentation.WindowTag) ? Visibility.Collapsed : Visibility.Visible;
-        ResetLine.Text = presentation.ResetLine;
-        StateMarker.Text = presentation.StateMarker == "已连接" ? "●" : "!";
-        ToolTipService.SetToolTip(Surface, presentation.Tooltip + $"\n状态：{presentation.StateMarker}");
+        if (!ReferenceEquals(presentation, _presentation))
+        {
+            _measureNeeded |= _presentation is null || presentation.MainLine != _presentation.MainLine ||
+                presentation.WindowTag != _presentation.WindowTag || presentation.ResetLine != _presentation.ResetLine ||
+                presentation.StateMarker != _presentation.StateMarker;
+            UiUpdates.Text(MainLine, presentation.MainLine);
+            UiUpdates.Text(WindowTag, presentation.WindowTag);
+            WindowTag.Visibility = string.IsNullOrEmpty(presentation.WindowTag) ? Visibility.Collapsed : Visibility.Visible;
+            UiUpdates.Text(ResetLine, presentation.ResetLine);
+            UiUpdates.Text(StateMarker, presentation.StateMarker == "已连接" ? "●" : "!");
+            if (_presentation?.Tooltip != presentation.Tooltip || _presentation?.StateMarker != presentation.StateMarker)
+                UiUpdates.Tooltip(Surface, presentation.Tooltip + $"\n状态：{presentation.StateMarker}");
+            _presentation = presentation;
+            UpdateTaskbarAppearance();
+        }
+        if (!_measureNeeded) return;
+        _measureNeeded = false;
+        _measurements++;
         // Measure the two lines instead of reserving a fixed 198 DIP and a star column.
         WidgetContent.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         _positioner.SetSize((int)Math.Ceiling(WidgetContent.DesiredSize.Width) + 22,
@@ -342,6 +366,20 @@ public sealed partial class WidgetWindow : Window
     }
 
     internal IntPtr Handle => WindowNative.GetWindowHandle(this);
+    internal object VerifyResourceReuse()
+    {
+        UpdatePresentation();
+        UpdateTaskbarAppearance();
+        var tag = WindowTag.Foreground;
+        var marker = StateMarker.Foreground;
+        var background = Surface.Background;
+        var measurements = _measurements;
+        var reads = TaskbarAppearance.ReadCount;
+        for (var i = 0; i < 100; i++) { UpdatePresentation(); UpdateTaskbarAppearance(); }
+        return new { BrushesReused = ReferenceEquals(tag, WindowTag.Foreground) && ReferenceEquals(marker, StateMarker.Foreground) && ReferenceEquals(background, Surface.Background),
+            ExtraMeasurements = _measurements - measurements, ExtraSystemReads = TaskbarAppearance.ReadCount - reads };
+    }
+    internal void InvalidateMetrics() => _measureNeeded = true;
     internal void RefreshPlacement() { if (!_dragging) _positioner.Update(_settings); }
 
     internal MonitorSettings SettingsForDrop(int left, int top)

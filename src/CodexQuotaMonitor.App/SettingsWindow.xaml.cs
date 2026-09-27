@@ -21,6 +21,7 @@ public sealed partial class SettingsWindow : Window
     private bool _saved;
     private bool _closed;
     private bool _previewQueued;
+    private (ThemeColors Colors, TaskbarAppearance Taskbar, double Opacity, double Font, bool Glass)? _appearanceKey;
 
     public SettingsWindow(AppRuntime runtime, MonitorSettings settings)
     {
@@ -164,13 +165,18 @@ public sealed partial class SettingsWindow : Window
             : "路径待验证；保存时会执行 codex.exe --version。";
     }
 
+    internal void RefreshAppearance() { if (!_closed) UpdatePreview(); }
+
     private void UpdatePreview()
     {
         var colors = WindowAppearance.Colors(_draft);
+        var taskbar = TaskbarAppearance.Read();
+        var key = (colors, taskbar, _draft.DetailsOpacity, _draft.FontSize, GlassBackdrop.IsAvailable);
+        if (_appearanceKey == key) return;
+        _appearanceKey = key;
         var background = WindowAppearance.ParseColor(colors.Background, Color.FromArgb(255, 232, 237, 243));
         var primary = WindowAppearance.ParseColor(colors.PrimaryText, Colors.Black);
         var secondary = WindowAppearance.ParseColor(colors.SecondaryText, Colors.Gray);
-        var taskbar = TaskbarAppearance.Read();
         PreviewSurface.Background = new SolidColorBrush(taskbar.Background);
         PreviewMain.Foreground = new SolidColorBrush(taskbar.Foreground);
         PreviewReset.Foreground = new SolidColorBrush(taskbar.Secondary);

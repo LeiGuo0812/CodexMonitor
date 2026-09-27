@@ -4,6 +4,20 @@ namespace CodexQuotaMonitor.Core;
 
 public static class QuotaFormatting
 {
+    private static readonly string[] Weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+    // Matches the boundaries of both countdown formatters without allocating strings.
+    public static long CountdownKey(DateTimeOffset? date, DateTimeOffset now)
+    {
+        if (date is null) return long.MinValue;
+        var ticks = (date.Value - now).Ticks;
+        if (ticks <= 0) return -1;
+        if (ticks < TimeSpan.TicksPerMinute) return 0;
+        if (ticks < TimeSpan.TicksPerHour) return 100 + (long)Math.Ceiling(ticks / (double)TimeSpan.TicksPerMinute);
+        if (ticks < TimeSpan.TicksPerDay) return 1000 + ticks / TimeSpan.TicksPerMinute;
+        return 100000 + ticks / TimeSpan.TicksPerHour;
+    }
+
     public static string FormatCreditValidity(ResetCredit credit, DateTimeOffset now, TimeZoneInfo? zone = null)
     {
         var status = credit.Status?.ToLowerInvariant() switch
@@ -32,8 +46,7 @@ public static class QuotaFormatting
             0 => "今天", 1 => "明天", 2 => "后天", -1 => "昨天",
             _ => local.Year == today.Year ? $"{local.Month}月{local.Day}日" : $"{local.Year}年{local.Month}月{local.Day}日"
         };
-        string[] weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-        return $"{day}（{weekdays[(int)local.DayOfWeek]}）{local:HH:mm}";
+        return $"{day}（{Weekdays[(int)local.DayOfWeek]}）{local:HH:mm}";
     }
 
     public static string FormatTimeRemaining(DateTimeOffset? resetAt, DateTimeOffset now)

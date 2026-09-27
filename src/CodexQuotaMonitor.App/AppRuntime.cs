@@ -23,6 +23,7 @@ public sealed class AppRuntime : IDisposable
     private MonitorSettings _settings;
     private bool _disposed;
     private bool _clearingCache;
+    private bool _appearanceQueued;
 
     public AppRuntime()
     {
@@ -46,7 +47,7 @@ public sealed class AppRuntime : IDisposable
     {
         _widget = new WidgetWindow(this);
         _widget.ShowWithoutActivation();
-        _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache);
+        _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache, QueueSystemAppearanceRefresh);
         ApplySettingsToWindows();
         _ = Task.Run(RefreshLoopAsync);
     }
@@ -87,9 +88,29 @@ public sealed class AppRuntime : IDisposable
 
     public void RefreshNow() => _ = _monitor.RefreshAsync(_lifetime.Token);
 
+    private void QueueSystemAppearanceRefresh()
+    {
+        TaskbarAppearance.Invalidate();
+        _widget?.InvalidateMetrics();
+        if (_appearanceQueued || _disposed) return;
+        _appearanceQueued = _dispatcher.TryEnqueue(() =>
+        {
+            _appearanceQueued = false;
+            if (!_disposed) RefreshSystemAppearance();
+        });
+    }
+
+    internal void RefreshSystemAppearance()
+    {
+        _widget?.ApplySettings(_settings);
+        _dashboard?.ApplySettings(_settings);
+        _settingsWindow?.RefreshAppearance();
+    }
+
     internal Task<MonitorViewState> RefreshForVerificationAsync() => _monitor.RefreshAsync(_lifetime.Token);
     internal object? ReadWidgetVerification() => _widget?.ReadVerification();
     internal Task<object> VerifyHoverAsync() => _widget!.VerifyHoverAsync();
+    internal object VerifyWidgetResourceReuse() => _widget!.VerifyResourceReuse();
     internal object? ReadTrayVerification() => _tray?.ReadVerification();
     internal object? ReadMenuVerification() => _tray?.ReadMenuVerification();
     internal DashboardWindow? DashboardForVerification => _dashboard;

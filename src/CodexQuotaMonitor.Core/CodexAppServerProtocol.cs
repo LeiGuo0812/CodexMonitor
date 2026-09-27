@@ -65,9 +65,8 @@ public static class CodexAppServerProtocol
 
         var limits = await RequestAsync(transport, 3, "account/rateLimits/read", parameters: null, cancellationToken)
             .ConfigureAwait(false);
-        using var accountDocument = JsonDocument.Parse(account.GetRawText());
-        using var limitsDocument = JsonDocument.Parse(limits.GetRawText());
-        return CodexRateLimitParser.Parse(accountDocument.RootElement, limitsDocument.RootElement, retrievedAt);
+        // RequestAsync returns independently owned elements; avoid serializing and parsing them again.
+        return CodexRateLimitParser.Parse(account, limits, retrievedAt);
     }
 
     private static async Task<JsonElement> RequestAsync(

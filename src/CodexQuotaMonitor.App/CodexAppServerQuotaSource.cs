@@ -230,14 +230,13 @@ internal sealed class CodexAppServerProcess : IAppServerLineTransport
         startInfo.ArgumentList.Add("app-server");
         // Stdio is the default across CLI versions. Older bundled CLIs reject --stdio.
         _process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        if (!_process.Start()) throw new System.ComponentModel.Win32Exception("Codex CLI did not start.");
-        _stderrConsumer = Task.Run(async () =>
+        try
         {
-            while (await _process.StandardError.ReadLineAsync().ConfigureAwait(false) is not null)
-            {
-                // Consume stderr to prevent a pipe stall. Raw text is intentionally never logged.
-            }
-        });
+            if (!_process.Start()) throw new System.ComponentModel.Win32Exception("Codex CLI did not start.");
+        }
+        catch { _process.Dispose(); throw; }
+        // Discard bytes with a bounded pooled buffer; no task wrapper or per-line strings.
+        _stderrConsumer = _process.StandardError.BaseStream.CopyToAsync(Stream.Null, 4096);
     }
 
     public async Task WriteLineAsync(string line, CancellationToken cancellationToken)

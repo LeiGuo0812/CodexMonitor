@@ -11,6 +11,9 @@ internal sealed class TaskbarPositioner
     private bool _hiddenForFullscreen;
     private int _widthDip = 148;
     private int _heightDip = 42;
+    private readonly System.Text.StringBuilder _foregroundClass = new(256);
+    private static readonly string[] TaskListClasses = ["MSTaskSwWClass", "MSTaskListWClass", "TaskListThumbnailWnd"];
+    private static readonly string[] TrayClasses = ["TrayNotifyWnd"];
 
     public void SetSize(int widthDip, int heightDip)
     {
@@ -170,8 +173,8 @@ internal sealed class TaskbarPositioner
         // Only place a widget in the taskbar when Win32 exposes both bounds used to calculate a
         // verified gap between the application list and notification area. Otherwise use the
         // above-taskbar placement; guessed coordinates can cover taskbar controls.
-        var listRect = FindVisibleChild(taskbar, ["MSTaskSwWClass", "MSTaskListWClass", "TaskListThumbnailWnd"]);
-        var trayRect = FindVisibleChild(taskbar, ["TrayNotifyWnd"]);
+        var listRect = FindVisibleChild(taskbar, TaskListClasses);
+        var trayRect = FindVisibleChild(taskbar, TrayClasses);
         if (listRect is null || trayRect is null) return false;
         if (data.Edge is not 1 and not 3) return false; // ABE_TOP and ABE_BOTTOM.
         if (height > taskbarRect.Height) return false;
@@ -224,7 +227,8 @@ internal sealed class TaskbarPositioner
     {
         var foreground = NativeWindowInterop.GetForegroundWindow();
         if (foreground == IntPtr.Zero || foreground == _hwnd) return false;
-        var className = new System.Text.StringBuilder(256);
+        var className = _foregroundClass;
+        className.Clear();
         NativeWindowInterop.GetClassName(foreground, className, className.Capacity);
         NativeWindowInterop.GetWindowThreadProcessId(foreground, out var processId);
         if (!NativeWindowInterop.GetWindowRect(foreground, out var foregroundRect)) return false;
@@ -247,9 +251,10 @@ internal sealed class TaskbarPositioner
     private static NativeWindowInterop.Rect? FindVisibleChild(IntPtr parent, IReadOnlyCollection<string> classNames)
     {
         NativeWindowInterop.Rect? found = null;
+        var className = new System.Text.StringBuilder(256);
         NativeWindowInterop.EnumChildCallback callback = (hwnd, _) =>
         {
-            var className = new System.Text.StringBuilder(256);
+            className.Clear();
             NativeWindowInterop.GetClassName(hwnd, className, className.Capacity);
             if (classNames.Contains(className.ToString(), StringComparer.Ordinal) &&
                 NativeWindowInterop.IsWindowVisible(hwnd) &&

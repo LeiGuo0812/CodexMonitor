@@ -35,6 +35,8 @@ internal static class RuntimeVerification
             dashboard.Update(second);
             await Task.Delay(1000);
             var wide = dashboard.ReadVerification();
+            var rowReuse = dashboard.VerifyResourceReuse();
+            var widgetReuse = runtime.VerifyWidgetResourceReuse();
             WindowPlacement.AboveTaskbar(dashboard, 360, 740, runtime.WidgetHandle);
             await Task.Delay(350);
             var narrow = dashboard.ReadVerification();
@@ -44,8 +46,11 @@ internal static class RuntimeVerification
             // its normal restore path before sampling the non-full-screen visibility case.
             if (dashboard.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter beforeDrag)
                 beforeDrag.Minimize();
+            await Task.Delay(200);
+            var minimizedClockStopped = dashboard.ClockSuspended;
             runtime.OpenDetails();
             await Task.Delay(1200);
+            var restoredClockRunning = dashboard.ClockRunning;
             var dragSnap = await runtime.VerifyDragSnapAsync();
             var hover = await runtime.VerifyHoverAsync();
             var samples = new List<object?>();
@@ -71,6 +76,8 @@ internal static class RuntimeVerification
             {
                 Startup = startup,
                 RefreshEditor = refreshEditor,
+                ResourceReuse = new { Rows = rowReuse, Widget = widgetReuse, MinimizedClockStopped = minimizedClockStopped,
+                    RestoredClockRunning = restoredClockRunning },
                 Menu = new { StartupPresent = idleMenu.GetProperty("StartupPresent").GetBoolean(),
                     CachePresent = idleMenu.GetProperty("CachePresent").GetBoolean(),
                     CommandsMapped = idleMenu.GetProperty("CommandsMapped").GetBoolean(),

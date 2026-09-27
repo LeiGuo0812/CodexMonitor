@@ -7,6 +7,10 @@ namespace CodexQuotaMonitor.App;
 
 internal static class WindowAppearance
 {
+    private static MonitorSettings? _paletteSettings;
+    private static bool _paletteDark;
+    private static ThemeColors? _palette;
+
     public static ThemeColors Colors(MonitorSettings settings)
     {
         var dark = settings.ThemeMode switch
@@ -15,7 +19,10 @@ internal static class WindowAppearance
             ThemeMode.Light => false,
             _ => IsSystemDark()
         };
-        return settings.ThemePreset switch
+        if (_palette is not null && _paletteSettings == settings && _paletteDark == dark) return _palette;
+        _paletteSettings = settings;
+        _paletteDark = dark;
+        return _palette = settings.ThemePreset switch
         {
             ThemePreset.MistWhite when dark => new("#172D44", "#EAF5FF", "#B0CBE1", "#7EBEFF", "#C8A1FF"),
             ThemePreset.WarmSand when dark => new("#38251D", "#FFF1DF", "#D7B99A", "#F2B16D", "#6ED8E1"),
@@ -84,8 +91,7 @@ internal static class WindowAppearance
         try
         {
             if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000) &&
-                new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled &&
-                !new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast)
+                TaskbarAppearance.AdvancedEffects && !TaskbarAppearance.Read().HighContrast)
             {
                 window.SystemBackdrop = new DesktopAcrylicBackdrop();
                 return;
@@ -130,9 +136,7 @@ internal static class WindowAppearance
     {
         try
         {
-            var color = new Windows.UI.ViewManagement.UISettings().GetColorValue(Windows.UI.ViewManagement.UIColorType.Background);
-            var luminance = 0.2126 * color.R + 0.7152 * color.G + 0.0722 * color.B;
-            return luminance < 128;
+            return TaskbarAppearance.AppsDark;
         }
         catch (Exception exception) when (exception is InvalidOperationException or System.Runtime.InteropServices.COMException)
         {

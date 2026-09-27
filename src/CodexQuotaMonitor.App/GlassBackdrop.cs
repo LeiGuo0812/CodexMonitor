@@ -15,8 +15,7 @@ internal sealed class GlassBackdrop : SystemBackdrop
     private ICompositionSupportsSystemBackdrop? _target;
 
     public static bool IsAvailable => DesktopAcrylicController.IsSupported() &&
-        new Windows.UI.ViewManagement.UISettings().AdvancedEffectsEnabled &&
-        !new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        TaskbarAppearance.AdvancedEffects && !TaskbarAppearance.Read().HighContrast;
 
     public void Update(Color tint, double opacity)
     {

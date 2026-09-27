@@ -47,6 +47,7 @@ internal sealed class SystemTrayIcon : IDisposable
     private readonly Action<TrayAction> _onAction;
     private readonly Func<bool> _startupEnabled;
     private readonly Func<bool> _cacheBusy;
+    private readonly Action _appearanceChanged;
     private readonly WndProcDelegate _windowProc;
     private readonly string _className = $"CQM.Tray.{Environment.ProcessId}";
     private readonly uint _taskbarCreatedMessage;
@@ -56,13 +57,16 @@ internal sealed class SystemTrayIcon : IDisposable
     private bool _lastNotifySucceeded;
     private IntPtr _hwnd;
     private string _tooltip = "Codex 额度监控";
+    private readonly WidgetPresentationCache _presentationCache = new();
+    private WidgetPresentation? _presentation;
     private bool _disposed;
 
-    public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy)
+    public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy, Action appearanceChanged)
     {
         _onAction = onAction;
         _startupEnabled = startupEnabled;
         _cacheBusy = cacheBusy;
+        _appearanceChanged = appearanceChanged;
         _windowProc = WindowProc;
         _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
         var windowClass = new WindowClassEx
@@ -82,9 +86,13 @@ internal sealed class SystemTrayIcon : IDisposable
 
     public void Update(MonitorViewState state)
     {
-        var presentation = WidgetPresentationBuilder.Create(state.Selection, DateTimeOffset.Now,
+        var presentation = _presentationCache.Get(state.Selection, DateTimeOffset.Now,
             state.LastSuccessfulUpdate, state.QueryError);
-        _tooltip = $"{presentation.MainLine} · {presentation.WindowTag}\n{presentation.ResetLine}\n{presentation.StateMarker}";
+        if (ReferenceEquals(_presentation, presentation)) return;
+        _presentation = presentation;
+        var tooltip = $"{presentation.MainLine} · {presentation.WindowTag}\n{presentation.ResetLine}\n{presentation.StateMarker}";
+        if (_tooltip == tooltip) return;
+        _tooltip = tooltip;
         AddOrUpdateIcon(NotifyIconModify);
     }
 
@@ -100,8 +108,11 @@ internal sealed class SystemTrayIcon : IDisposable
         {
             AddOrUpdateIcon(NotifyIconAdd);
         }
-        else if (message is 0x02E0 or 0x007E or 0x001A) // DPI, display or system settings changed.
+        else if (message is 0x02E0 or 0x007E or 0x001A or 0x031A or 0x0320 or 0x001E)
         {
+            // DPI, display, settings, theme, DWM color or system time changed.
+            if (message is 0x001A or 0x001E) TimeZoneInfo.ClearCachedData();
+            _appearanceChanged();
             AddOrUpdateIcon(NotifyIconModify);
         }
 

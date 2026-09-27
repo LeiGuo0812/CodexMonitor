@@ -27,6 +27,11 @@ if (!(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).LastWr
 }
 $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
 if ($result.VerificationError) { throw ('Verification failed: ' + $result.VerificationError) }
+if (!$result.ResourceReuse.Rows.UnchangedReuses -or !$result.ResourceReuse.Rows.ChangedReuses -or
+    !$result.ResourceReuse.Rows.RemovedRowsReleased -or !$result.ResourceReuse.Rows.DuplicateCardsPreserved -or
+    !$result.ResourceReuse.Widget.BrushesReused -or $result.ResourceReuse.Widget.ExtraMeasurements -gt 1 -or
+    $result.ResourceReuse.Widget.ExtraSystemReads -gt 1 -or !$result.ResourceReuse.MinimizedClockStopped -or
+    !$result.ResourceReuse.RestoredClockRunning) { throw 'On-demand resource reuse or minimized clock suspension failed.' }
 if (!$result.Startup.HostPathRegistered -or !$result.Startup.Disabled -or !$result.Startup.SavedAfterPreview) {
     throw 'Startup registration did not track the single-file host after settings preview.'
 }

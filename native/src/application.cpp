@@ -32,6 +32,16 @@ enum ControlId
     RefreshControl,
     PathControl
 };
+static constexpr int SliderOffset = 1000;
+static bool sliderControl(int id)
+{
+    return id == OpacityControl || id == FontControl || id == HorizontalControl || id == VerticalControl ||
+           id == RefreshControl;
+}
+static double sliderFactor(int id)
+{
+    return id == OpacityControl ? 100. : id == FontControl ? 10. : id == RefreshControl ? 2. : 1.;
+}
 static float scaleFor(HWND h)
 {
     return std::max(96U, GetDpiForWindow(h)) / 96.f;
@@ -116,6 +126,8 @@ Application::~Application()
         DestroyWindow(details_.hwnd);
     if (widget_)
         DestroyWindow(widget_);
+    if (controller_)
+        DestroyWindow(controller_);
     if (tooltip_)
         DestroyWindow(tooltip_);
     if (icon_)
@@ -130,7 +142,7 @@ Application::~Application()
 int Application::run()
 {
     active_ = this;
-    INITCOMMONCONTROLSEX init{sizeof(init), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES};
+    INITCOMMONCONTROLSEX init{sizeof(init), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES | ICC_BAR_CLASSES};
     InitCommonControlsEx(&init);
     BufferedPaintInit();
     saved_ = settings_ = loadSettings();
@@ -147,15 +159,19 @@ int Application::run()
     wc.lpszClassName = L"CodexMonitor.Native.Widget";
     if (!RegisterClassExW(&wc))
         throw std::runtime_error("WINDOW_CLASS_FAILED");
+    wc.lpszClassName = L"CodexMonitor.Native.Controller";
+    if (!RegisterClassExW(&wc))
+        throw std::runtime_error("CONTROLLER_CLASS_FAILED");
+    controller_ =
+        CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"CodexMonitor Controller",
+                        WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance_, this);
+    if (!controller_)
+        throw std::runtime_error("CONTROLLER_CREATE_FAILED");
     wc.lpfnWndProc = viewProc;
     wc.lpszClassName = L"CodexMonitor.Native.View";
     wc.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(101));
     RegisterClassExW(&wc);
-    widget_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-                              L"CodexMonitor.Native.Widget", L"Codex 额度监控", WS_POPUP, 0, 0, 200, 60,
-                              nullptr, nullptr, instance_, this);
-    if (!widget_)
-        throw std::runtime_error("WIDGET_CREATE_FAILED");
+    createWidget();
     activateEvent_.reset(CreateEventW(nullptr, FALSE, FALSE,
                                       verify_ ? L"Local\\CodexQuotaMonitor.NativeVerifyActivate"
                                               : L"Local\\CodexQuotaMonitor.Activate"));
@@ -163,16 +179,6 @@ int Application::run()
     icon_ = (HICON)LoadImageW(instance_, MAKEINTRESOURCEW(101), IMAGE_ICON,
                               GetSystemMetricsForDpi(SM_CXSMICON, GetDpiForWindow(widget_)),
                               GetSystemMetricsForDpi(SM_CYSMICON, GetDpiForWindow(widget_)), LR_DEFAULTCOLOR);
-    tooltip_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
-                               WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
-                               CW_USEDEFAULT, CW_USEDEFAULT, widget_, nullptr, instance_, nullptr);
-    SendMessageW(tooltip_, TTM_SETMAXTIPWIDTH, 0, 450);
-    TOOLINFOW ti{sizeof(ti)};
-    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-    ti.hwnd = widget_;
-    ti.uId = (UINT_PTR)widget_;
-    ti.lpszText = (LPWSTR)L"Codex 额度监控";
-    SendMessageW(tooltip_, TTM_ADDTOOLW, 0, (LPARAM)&ti);
     addTray();
     foregroundHook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, shellEvent,
                                       0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
@@ -185,7 +191,7 @@ int Application::run()
             if (type != MibInitialNotification)
                 PostMessageW((HWND)context, NetworkMessage, 0, 0);
         },
-        widget_, FALSE, &networkNotification_);
+        controller_, FALSE, &networkNotification_);
     if (!verify_ && saved_.startup)
     {
         try
@@ -199,18 +205,20 @@ int Application::run()
     }
     place(true);
     drawWidget();
-    SetTimer(widget_, TickTimer, 1000, nullptr);
+    SetTimer(controller_, TickTimer, 1000, nullptr);
     nextRefresh_ = now();
+    if (verify_)
+        verifyStarted_ = GetTickCount64();
     refresh();
     if (verify_)
     {
-        verifyStarted_ = GetTickCount64();
         openDetails();
     }
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0)
     {
-        if (editor_.hwnd && IsDialogMessageW(editor_.hwnd, &message))
+        if (editor_.hwnd && (message.hwnd == editor_.hwnd || IsChild(editor_.hwnd, message.hwnd)) &&
+            IsDialogMessageW(editor_.hwnd, &message))
             continue;
         TranslateMessage(&message);
         DispatchMessageW(&message);
@@ -219,8 +227,8 @@ int Application::run()
 }
 void CALLBACK Application::shellEvent(HWINEVENTHOOK, DWORD, HWND h, LONG object, LONG, DWORD, DWORD)
 {
-    if (active_ && h && object == OBJID_WINDOW && active_->widget_)
-        PostMessageW(active_->widget_, ShellMessage, 0, 0);
+    if (active_ && h && object == OBJID_WINDOW && active_->controller_)
+        PostMessageW(active_->controller_, ShellMessage, 0, 0);
 }
 LRESULT CALLBACK Application::widgetProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
@@ -339,7 +347,10 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         refresh();
         return 0;
     case NetworkMessage:
-        if (now() - lastNetworkRefresh_ >= 5)
+        // Interface parameter notifications can be noisy (VPNs and virtual adapters).
+        // Do not turn every notification into a back-to-back quota request.
+        if (!state_.refreshing && now() - lastNetworkRefresh_ >= 30 &&
+            (!queryStarted_ || GetTickCount64() - queryStarted_ >= 30000))
         {
             lastNetworkRefresh_ = now();
             refresh();
@@ -446,6 +457,10 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
                 OffsetRect(&dragBounds_, dx, dy);
                 cursor_ = p;
                 docked_ = false;
+                attachTaskbar(nullptr);
+                RECT bar{};
+                GetWindowRect(FindWindowW(L"Shell_TrayWnd", nullptr), &bar);
+                snapReady_ = shouldSnapToTaskbar(dragBounds_, bar, scale);
                 SetWindowPos(h, HWND_TOPMOST, dragBounds_.left, dragBounds_.top, 0, 0,
                              SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
                 drawWidget();
@@ -468,6 +483,7 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         {
             bool wasDrag = drag_;
             down_ = drag_ = false;
+            snapReady_ = false;
             ReleaseCapture();
             if (wasDrag)
             {
@@ -477,9 +493,8 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
                 GetWindowRect(barWindow, &bar);
                 int width = dragBounds_.right - dragBounds_.left,
                     height = dragBounds_.bottom - dragBounds_.top;
-                float center = (dragBounds_.top + dragBounds_.bottom) / 2.f;
                 Settings changed = saved_;
-                if (center >= bar.top - 24 * scale && center <= bar.bottom + 24 * scale)
+                if (shouldSnapToTaskbar(dragBounds_, bar, scale))
                 {
                     changed.position = 1;
                     changed.horizontal = -360;
@@ -502,7 +517,8 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
                 settings_.position = changed.position;
                 settings_.horizontal = changed.horizontal;
                 settings_.vertical = changed.vertical;
-                saveSettings(saved_);
+                if (!verify_)
+                    saveSettings(saved_);
                 fillControls();
                 place(true);
                 drawWidget();
@@ -513,14 +529,39 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         return 0;
     case WM_CAPTURECHANGED:
     case WM_CANCELMODE:
+    {
+        bool interrupted = down_ || drag_;
         down_ = drag_ = false;
+        snapReady_ = false;
+        if (interrupted)
+        {
+            place(true);
+            drawWidget();
+        }
         return 0;
+    }
     case WM_CLOSE:
         command(Quit);
         return 0;
     case WM_DESTROY:
-        widget_ = nullptr;
-        PostQuitMessage(0);
+        if (h == widget_)
+        {
+            widget_ = nullptr;
+            taskbarOwner_ = nullptr;
+            // Owned windows may be destroyed when Explorer recreates the taskbar.
+            // The independent controller keeps the tray, worker and timer alive.
+            if (tooltip_ && IsWindow(tooltip_))
+                DestroyWindow(tooltip_);
+            tooltip_ = nullptr;
+            widgetCanvas_.reset();
+            hidden_ = down_ = drag_ = hover_ = false;
+        }
+        if (h == controller_)
+        {
+            controller_ = nullptr;
+            if (!closing_)
+                PostQuitMessage(0);
+        }
         return 0;
     }
     return DefWindowProcW(h, m, w, l);
@@ -529,6 +570,24 @@ void Application::tick()
 {
     if (closing_)
         return;
+    if ((!widget_ || !IsWindow(widget_)) && FindWindowW(L"Shell_TrayWnd", nullptr))
+    {
+        widget_ = nullptr;
+        if (tooltip_ && IsWindow(tooltip_))
+            DestroyWindow(tooltip_);
+        tooltip_ = nullptr;
+        widgetCanvas_.reset();
+        taskbarOwner_ = nullptr;
+        hidden_ = down_ = drag_ = hover_ = false;
+        createWidget();
+    }
+    bool queryReady = false;
+    {
+        std::lock_guard lock(resultMutex_);
+        queryReady = queryResult_.has_value();
+    }
+    if (queryReady)
+        receiveQuery(); // Also recover completion if a posted message was lost/consumed.
     if (activateEvent_ && WaitForSingleObject(activateEvent_.get(), 0) == WAIT_OBJECT_0)
         openDetails();
     if (!drag_)
@@ -546,7 +605,10 @@ void Application::tick()
     }
     if (details_.hwnd && !IsIconic(details_.hwnd))
     {
-        std::wstring clock = signature + std::to_wstring((now() - state_.updated) / 60);
+        std::wstring clock =
+            signature + std::to_wstring((now() - state_.updated) / 60) +
+            (state_.refreshing ? L"busy" + std::to_wstring((GetTickCount64() - queryStarted_) / 1000)
+                               : L"idle");
         for (auto &q : state_.data.windows)
         {
             clock += countdown(q.reset) + std::to_wstring((int)(q.timePercent().value_or(-1) * 10));
@@ -615,6 +677,37 @@ void Application::tick()
             saved_ = originalSaved;
             settings_ = original;
             verification_["themeIterations"] = 72;
+            bool sliders = true;
+            for (int id : {OpacityControl, FontControl, HorizontalControl, VerticalControl, RefreshControl})
+            {
+                auto slider = controls_[id + SliderOffset];
+                int originalPosition = (int)SendMessageW(slider, TBM_GETPOS, 0, 0);
+                int minimum = (int)SendMessageW(slider, TBM_GETRANGEMIN, 0, 0);
+                SendMessageW(slider, TBM_SETPOS, TRUE, minimum);
+                SendMessageW(editor_.hwnd, WM_HSCROLL, TB_THUMBTRACK, (LPARAM)slider);
+                sliders &=
+                    abs(wcstod(textOf(controls_[id]).c_str(), nullptr) - minimum / sliderFactor(id)) < .001;
+                SendMessageW(slider, TBM_SETPOS, TRUE, originalPosition);
+                SendMessageW(editor_.hwnd, WM_HSCROLL, TB_ENDTRACK, (LPARAM)slider);
+            }
+            settings_ = original;
+            fillControls();
+            appearance();
+            verification_["slidersSynchronized"] = sliders;
+            drawDetails();
+            bool labelsFit = true;
+            for (auto &hit : details_.hits)
+                if (hit.action == SettingsPage || hit.action == ToggleUtc || hit.action == Refresh)
+                    labelsFit &=
+                        drawing_.measure(hit.label, 11, true).width <= hit.rect.right - hit.rect.left - 16;
+            verification_["detailButtonLabelsFit"] = labelsFit;
+            HWND controller = controller_;
+            DestroyWindow(widget_);
+            createWidget();
+            place(true);
+            drawWidget();
+            verification_["widgetRecovery"] = widget_ && IsWindow(widget_) && controller_ == controller &&
+                                              IsWindow(controller_) && trayAdded_;
             verification_["controlsSynchronized"] = synchronized;
             verification_["menuSynchronized"] = menuSync;
             HWND existing = details_.hwnd;
@@ -654,10 +747,13 @@ void Application::refresh()
     if (queryThread_.joinable())
         queryThread_.join();
     state_.refreshing = true;
+    queryStarted_ = GetTickCount64();
+    if (verify_)
+        verification_["queryStarts"].push_back(queryStarted_ - verifyStarted_);
     redrawViews();
     auto path = saved_.codex;
     queryThread_ = std::thread(
-        [this, path, target = widget_]
+        [this, path, target = controller_]
         {
             auto result = queryCodex(path, stop_);
             {
@@ -669,8 +765,6 @@ void Application::refresh()
 }
 void Application::receiveQuery()
 {
-    if (queryThread_.joinable())
-        queryThread_.join();
     std::optional<Query> q;
     {
         std::lock_guard lock(resultMutex_);
@@ -678,6 +772,13 @@ void Application::receiveQuery()
     }
     if (!q)
         return;
+    if (queryThread_.joinable())
+        queryThread_.join();
+    if (verify_)
+        verification_["queryCompletions"].push_back({{"elapsedMs", GetTickCount64() - queryStarted_},
+                                                     {"success", q->success},
+                                                     {"error", q->error},
+                                                     {"creditDetails", q->creditDetails}});
     failures_ = q->success ? 0 : std::min(failures_ + 1, 5);
     state_.apply(std::move(*q));
     nextRefresh_ = now() + std::min(std::max(saved_.refresh, 900),
@@ -713,6 +814,43 @@ void Application::appearance()
             colors_.glass = applyGlass(view->hwnd, colors_.dark, colors_.glass);
     drawWidget();
     redrawViews();
+}
+void Application::createWidget()
+{
+    widget_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+                              L"CodexMonitor.Native.Widget", L"Codex 额度监控", WS_POPUP, 0, 0, 200, 60,
+                              nullptr, nullptr, instance_, this);
+    if (!widget_)
+        throw std::runtime_error("WIDGET_CREATE_FAILED");
+    taskbarOwner_ = nullptr;
+    tooltip_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+                               WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
+                               CW_USEDEFAULT, CW_USEDEFAULT, widget_, nullptr, instance_, nullptr);
+    SendMessageW(tooltip_, TTM_SETMAXTIPWIDTH, 0, 450);
+    TOOLINFOW ti{sizeof(ti)};
+    ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    ti.hwnd = widget_;
+    ti.uId = (UINT_PTR)widget_;
+    ti.lpszText = (LPWSTR)L"Codex 额度监控";
+    SendMessageW(tooltip_, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    updateTooltip();
+}
+void Application::attachTaskbar(HWND owner)
+{
+    if (!widget_ || taskbarOwner_ == owner)
+        return;
+    // The shell temporarily reports GW_OWNER == null while promoting its group.
+    // Removing ownership in that interval breaks the shell's saved relationship
+    // and strands this window in the elevated layer after the panel closes.
+    // Defer detaching until Windows restores the owner; dragging itself is free.
+    if (taskbarOwner_ && IsWindow(taskbarOwner_) && !GetWindow(widget_, GW_OWNER))
+        return;
+    SetLastError(ERROR_SUCCESS);
+    auto previous = SetWindowLongPtrW(widget_, GWLP_HWNDPARENT, (LONG_PTR)owner);
+    if (previous || GetLastError() == ERROR_SUCCESS)
+        taskbarOwner_ = owner;
+    // Windows may temporarily report no owner while moving an ownership group
+    // between shell layers. Do not repeatedly reattach during that transition.
 }
 void Application::place(bool immediate)
 {
@@ -759,6 +897,13 @@ void Application::place(bool immediate)
     }
     bool styleChanged = docked_ != p.docked;
     docked_ = p.docked;
+    attachTaskbar(docked_ ? FindWindowW(L"Shell_TrayWnd", nullptr) : nullptr);
+    // During a shell-layer transition Windows temporarily detaches the owner
+    // group. Its compositor controls visibility until the transition finishes.
+    // Keep the existing geometry and do not fight that animation with show/raise calls.
+    if (docked_ && taskbarOwner_ && IsWindow(taskbarOwner_) && !GetWindow(widget_, GW_OWNER) && !hidden_ &&
+        !immediate)
+        return;
     if (moved || hidden_ || !IsWindowVisible(widget_))
     {
         SetWindowPos(widget_, HWND_TOPMOST, p.rect.left, p.rect.top, width, height,
@@ -768,7 +913,7 @@ void Application::place(bool immediate)
     }
     else if (styleChanged)
         drawWidget();
-    else
+    else if (!taskbarOwner_)
     {
         HWND above = GetWindow(widget_, GW_HWNDPREV), bar = FindWindowW(L"Shell_TrayWnd", nullptr);
         for (int i = 0; above && i < 512; i++, above = GetWindow(above, GW_HWNDPREV))
@@ -799,6 +944,9 @@ void Application::drawWidget()
     if (!docked_)
         widgetCanvas_.rect(box(0, 0, w, h), taskbarDark_ ? color(L"#262626", .94f) : color(L"#F0F0F0", .95f),
                            12);
+    if (snapReady_)
+        widgetCanvas_.border(box(1, 1, w - 2, h - 2), color(taskbarDark_ ? L"#91C5FF" : L"#286DB7"), 11,
+                             1.5f);
     if (hoverAmount_ > 0)
         widgetCanvas_.rect(box(1, 1, w - 2, h - 2),
                            color(L"#FFFFFF", hoverAmount_ * (taskbarDark_ ? .19f : .37f)), 6);
@@ -827,11 +975,11 @@ void Application::drawWidget()
                             : q->kind == Kind::FiveHour ? L"5h"
                                                         : L"其他")
                          : L"";
-    widgetCanvas_.text(tag, box(x, y + 4, 24, 18), 10,
-                       q && q->kind == Kind::Week ? colors_.weekly : colors_.accent, true);
+    auto tagColor = contrast_ ? primary : color(taskbarDark_ ? L"#91C5FF" : L"#286DB7");
+    widgetCanvas_.text(tag, box(x, y + 4, 24, 18), 10, tagColor, true);
     x += drawing_.measure(tag, 10, true).width + 7;
     widgetCanvas_.text(state_.error.empty() && !state_.stale ? L"●" : L"!", box(x, y + 5, 12, 16), 8,
-                       state_.error.empty() && !state_.stale ? color(L"#31966C") : color(L"#BC4844"), true);
+                       state_.error.empty() && !state_.stale ? tagColor : color(L"#BC4844"), true);
     widgetCanvas_.text(L"重置 " + countdown(q ? q->reset : std::nullopt),
                        box(11, y + line, w - 22, h - y - line), std::max(10.f, font - 4), secondary);
     widgetCanvas_.end();
@@ -851,7 +999,7 @@ void Application::updateTooltip()
     if (trayAdded_)
     {
         NOTIFYICONDATAW n{sizeof(n)};
-        n.hWnd = widget_;
+        n.hWnd = controller_;
         n.uID = 1;
         n.uFlags = NIF_TIP;
         auto label = (q ? q->label() : L"剩余 --") + L" · " + countdown(q ? q->reset : std::nullopt);
@@ -862,7 +1010,7 @@ void Application::updateTooltip()
 void Application::addTray()
 {
     NOTIFYICONDATAW n{sizeof(n)};
-    n.hWnd = widget_;
+    n.hWnd = controller_;
     n.uID = 1;
     n.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     n.uCallbackMessage = TrayMessage;
@@ -880,7 +1028,7 @@ void Application::removeTray()
     if (trayAdded_)
     {
         NOTIFYICONDATAW n{sizeof(n)};
-        n.hWnd = widget_;
+        n.hWnd = controller_;
         n.uID = 1;
         Shell_NotifyIconW(NIM_DELETE, &n);
         trayAdded_ = false;
@@ -889,7 +1037,7 @@ void Application::removeTray()
 void Application::notify(const std::wstring &text)
 {
     NOTIFYICONDATAW n{sizeof(n)};
-    n.hWnd = widget_;
+    n.hWnd = controller_;
     n.uID = 1;
     n.uFlags = NIF_INFO;
     n.dwInfoFlags = NIIF_INFO;
@@ -996,7 +1144,7 @@ void Application::command(int id)
                 cleanupThread_.join();
             cacheBusy_ = true;
             cleanupThread_ = std::thread(
-                [this, target = widget_]
+                [this, target = controller_]
                 {
                     CleanupResult r;
                     try
@@ -1021,6 +1169,7 @@ void Application::command(int id)
         removeTray();
         if (widget_)
             DestroyWindow(widget_);
+        PostQuitMessage(0);
         break;
     case Save:
         readControls(true);
@@ -1084,7 +1233,8 @@ void Application::openDetails()
         ShowWindow(details_.hwnd, SW_RESTORE);
         fitDetails();
         SetForegroundWindow(details_.hwnd);
-        refresh();
+        if (!queryStarted_ || GetTickCount64() - queryStarted_ >= 10000)
+            refresh();
         return;
     }
     details_ = View{};
@@ -1107,7 +1257,8 @@ void Application::openDetails()
     SetForegroundWindow(h);
     if (animate_)
         SetTimer(h, AnimationTimer, 16, nullptr);
-    refresh();
+    if (!queryStarted_ || GetTickCount64() - queryStarted_ >= 10000)
+        refresh();
 }
 void Application::fitDetails()
 {
@@ -1180,7 +1331,8 @@ void Application::redrawViews()
 }
 void Application::card(Canvas &c, D2D1_RECT_F r, Color tint)
 {
-    c.rect(r, alpha(blend(colors_.background, tint, .18f), colors_.glass ? .64f : 1.f), 16);
+    c.rect(r, alpha(blend(colors_.background, tint, colors_.dark ? .23f : .12f), colors_.glass ? .82f : 1.f),
+           16);
     c.border(r, alpha(tint, .22f), 16);
 }
 void Application::button(View &v, int id, const std::wstring &label, D2D1_RECT_F rect, bool accentButton)
@@ -1193,8 +1345,9 @@ void Application::button(View &v, int id, const std::wstring &label, D2D1_RECT_F
         v.canvas->border(rect, colors_.accent, 7, 1.3f);
     auto size = drawing_.measure(label, 11, true);
     v.canvas->text(label,
-                   box(rect.left + 8, rect.top + (rect.bottom - rect.top - size.height) / 2,
-                       rect.right - rect.left - 16, size.height + 1),
+                   box(rect.left + std::max(8.f, (rect.right - rect.left - size.width) / 2),
+                       rect.top + (rect.bottom - rect.top - size.height) / 2, rect.right - rect.left - 16,
+                       size.height + 1),
                    11, c, true);
 }
 void Application::tip(View &v, int id, const std::wstring &text, D2D1_RECT_F rect)
@@ -1253,13 +1406,16 @@ void Application::drawDetails()
     float w = r.right / v.scale, h = r.bottom / v.scale;
     auto &c = *v.canvas;
     if (!c.begin(v.hwnd, false, v.scale,
-                 alpha(colors_.background, colors_.glass ? (float)(.18 + .5 * settings_.detailsOpacity) : 1)))
+                 alpha(colors_.background, colors_.glass ? (float)(.32 + .5 * settings_.detailsOpacity) : 1)))
         return;
     v.hits.clear();
     chrome(v, L"CODEX  /  额度监控", w);
     c.text(L"额度概览", box(18, 42, w - 120, 33), 23, colors_.primary, true);
     c.text(planLabel(state_.data.plan), box(18, 77, w - 150, 20), 11, colors_.secondary);
-    button(v, Refresh, state_.refreshing ? L"刷新中…" : L"刷新", box(w - 82, 47, 64, 32), true);
+    auto refreshLabel = state_.refreshing
+                            ? L"刷新中 " + std::to_wstring((GetTickCount64() - queryStarted_) / 1000) + L"秒"
+                            : L"刷新";
+    button(v, Refresh, refreshLabel, box(w - 119, 47, 101, 32), true);
     float bottom = h - 72;
     float y = 108 - v.scroll;
     float left = 18, right = w - 18, width = w - 36;
@@ -1351,9 +1507,12 @@ void Application::drawDetails()
     c.text(L"重置卡", box(left + 16, y + 14, width - 130, 24), 14, colors_.primary, true);
     c.text(state_.data.creditCount ? std::to_wstring(*state_.data.creditCount) + L" 张" : L"数量未知",
            box(right - 112, y + 12, 96, 30), 20, colors_.primary, true);
-    std::wstring status = state_.data.creditDetails == Query::Complete  ? L"按到期时间排序"
-                          : state_.data.creditDetails == Query::Partial ? L"仅返回部分到期详情"
-                                                                        : L"到期详情暂不可用";
+    std::wstring status = state_.creditDetailsStale ? L"上次明细 · " + readable(state_.creditsUpdated)
+                          : state_.data.creditDetails == Query::CountOnly
+                              ? L"数量已更新 · 接口本次未提供到期明细"
+                          : state_.data.creditDetails == Query::Complete ? L"按到期时间排序"
+                          : state_.data.creditDetails == Query::Partial  ? L"仅返回部分到期详情"
+                                                                         : L"到期详情暂不可用";
     c.text(status, box(left + 16, y + 47, width - 32, 22), 11, colors_.secondary);
     float cy = y + 76;
     int creditIndex = 0;
@@ -1397,13 +1556,13 @@ void Application::drawDetails()
             ? (now() - state_.updated < 60 ? L"刚刚更新"
                                            : std::to_wstring((now() - state_.updated) / 60) + L" 分钟前更新")
             : L"尚未成功更新";
-    c.text(updated, box(18, bottom + 9, w - 146, 20), 11, colors_.primary);
+    c.text(updated, box(18, bottom + 9, w - 202, 20), 11, colors_.primary);
     c.text(state_.missingFive                        ? L"5 小时字段暂缺，等待确认"
            : state_.error.empty() && !state_.updated ? L"正在连接 Codex"
                                                      : errorLabel(state_.error),
-           box(18, bottom + 30, w - 145, 34), 10, colors_.secondary);
-    button(v, ToggleUtc, v.utc ? L"本地时间" : L"UTC", box(w - 137, bottom + 10, 48, 27));
-    button(v, SettingsPage, L"外观与位置", box(w - 86, bottom + 10, 70, 42));
+           box(18, bottom + 38, w - 36, 30), 10, colors_.secondary);
+    button(v, ToggleUtc, v.utc ? L"本地时间" : L"UTC", box(w - 180, bottom + 6, 68, 28));
+    button(v, SettingsPage, L"外观与位置", box(w - 106, bottom + 6, 88, 28));
     if (v.total > bottom - 104)
     {
         float visible = bottom - 104;
@@ -1453,7 +1612,7 @@ void Application::openSettings()
     for (auto value : {L"跟随系统", L"浅色", L"深色"})
         SendMessageW(controls_[ModeControl], CB_ADDSTRING, 0, (LPARAM)value);
     for (auto value :
-         {L"雾白 · 冰蓝清透", L"暖砂 · 琥珀暖调", L"石墨 · 深灰翡翠", L"午夜 · 靛蓝紫晶", L"自定义"})
+         {L"雾白 · 银白雾蓝", L"暖砂 · 米砂琥珀", L"石墨 · 中性灰银", L"午夜 · 深蓝月光", L"自定义"})
         SendMessageW(controls_[ThemeControl], CB_ADDSTRING, 0, (LPARAM)value);
     createControl(OpacityControl, L"EDIT", L"", 20, 332, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
     createControl(FontControl, L"EDIT", L"", 235, 332, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
@@ -1464,6 +1623,33 @@ void Application::openSettings()
     createControl(SecondaryControl, L"EDIT", L"", 20, 552, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
     createControl(AccentControl, L"EDIT", L"", 235, 552, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
     createControl(RefreshControl, L"EDIT", L"", 20, 782, 400, 30, ES_AUTOHSCROLL | WS_BORDER);
+    for (int id : {OpacityControl, FontControl, HorizontalControl, VerticalControl, RefreshControl})
+    {
+        auto r = controlRects_[id];
+        controlRects_[id].left = r.right - 58;
+        createControl(id + SliderOffset, TRACKBAR_CLASSW, L"", r.left, r.top, r.right - r.left - 68, 30,
+                      TBS_HORZ | TBS_NOTICKS);
+        auto slider = controls_[id + SliderOffset];
+        int min = id == OpacityControl      ? 40
+                  : id == FontControl       ? 130
+                  : id == HorizontalControl ? -4000
+                  : id == RefreshControl    ? 1
+                                            : 0;
+        int max = id == OpacityControl      ? 100
+                  : id == FontControl       ? 180
+                  : id == HorizontalControl ? 0
+                  : id == RefreshControl    ? 120
+                                            : 160;
+        SendMessageW(slider, TBM_SETRANGEMIN, FALSE, min);
+        SendMessageW(slider, TBM_SETRANGEMAX, TRUE, max);
+        SendMessageW(slider, TBM_SETPAGESIZE, 0, id == HorizontalControl ? 50 : 5);
+        SetWindowTheme(slider, L"", L"");
+        SetWindowTextW(slider, id == OpacityControl      ? L"磨砂色调浓度"
+                               : id == FontControl       ? L"数字条字号"
+                               : id == HorizontalControl ? L"水平偏移"
+                               : id == VerticalControl   ? L"上移距离"
+                                                         : L"刷新间隔");
+    }
     createControl(PathControl, L"EDIT", L"", 20, 902, 315, 30, ES_AUTOHSCROLL | WS_BORDER);
     createControl(Browse, L"BUTTON", L"浏览…", 345, 902, 75, 30, BS_PUSHBUTTON);
     // Real button HWNDs preserve Tab/Enter/Esc behavior for the settings form.
@@ -1573,6 +1759,8 @@ void Application::fillControls()
         std::wostringstream s;
         s << v;
         SetWindowTextW(controls_[id], s.str().c_str());
+        if (sliderControl(id))
+            SendMessageW(controls_[id + SliderOffset], TBM_SETPOS, TRUE, (LPARAM)round(v * sliderFactor(id)));
     };
     number(OpacityControl, settings_.detailsOpacity);
     number(FontControl, settings_.font);
@@ -1630,6 +1818,12 @@ void Application::readControls(bool save)
     s.vertical = (int)round(y);
     s.refresh = (int)round(refresh * 60);
     s.normalize();
+    for (auto [id, value] : {std::pair{OpacityControl, opacity},
+                             {FontControl, font},
+                             {HorizontalControl, x},
+                             {VerticalControl, y},
+                             {RefreshControl, refresh}})
+        SendMessageW(controls_[id + SliderOffset], TBM_SETPOS, TRUE, (LPARAM)round(value * sliderFactor(id)));
     settings_ = s;
     appearance();
     place(true);
@@ -1644,7 +1838,7 @@ void Application::readControls(bool save)
         if (validationThread_.joinable())
             validationThread_.join();
         validationThread_ = std::thread(
-            [this, path = s.codex, target = widget_]
+            [this, path = s.codex, target = controller_]
             {
                 bool ok = verifyCodex(path, stop_);
                 {
@@ -1671,7 +1865,7 @@ void Application::drawSettings()
     float w = r.right / v.scale, h = r.bottom / v.scale;
     auto &c = *v.canvas;
     if (!c.begin(v.hwnd, false, v.scale,
-                 alpha(colors_.background, colors_.glass ? (float)(.18 + .5 * settings_.detailsOpacity) : 1)))
+                 alpha(colors_.background, colors_.glass ? (float)(.32 + .5 * settings_.detailsOpacity) : 1)))
         return;
     v.hits.clear();
     chrome(v, L"CODEX  /  设置", w);
@@ -1697,7 +1891,8 @@ void Application::drawSettings()
           fg = taskbarDark_ ? color(L"#EEEEEE") : color(L"#1B1B1B");
     c.rect(box(20, 631 - v.scroll, 400, 65), bg, 12);
     c.text(L"剩余 78%", box(34, 640 - v.scroll, 130, 25), (float)settings_.font, fg, true);
-    c.text(L"周", box(150, 644 - v.scroll, 30, 20), 10, colors_.weekly, true);
+    c.text(L"周 ·", box(150, 644 - v.scroll, 40, 20), 10,
+           contrast_ ? fg : color(taskbarDark_ ? L"#91C5FF" : L"#286DB7"), true);
     c.text(L"重置 2小时14分", box(34, 666 - v.scroll, 350, 20), 11, alpha(fg, .75f));
     auto luminance = [](Color color)
     {
@@ -1956,6 +2151,52 @@ LRESULT Application::viewMessage(View &v, bool editor, HWND h, UINT m, WPARAM w,
             return 0;
         }
         break;
+    case WM_HSCROLL:
+        if (editor && l && !editorSync_ && !saving_)
+        {
+            int id = GetDlgCtrlID((HWND)l) - SliderOffset;
+            if (sliderControl(id))
+            {
+                double value = SendMessageW((HWND)l, TBM_GETPOS, 0, 0) / sliderFactor(id);
+                std::wostringstream text;
+                text << value;
+                editorSync_ = true;
+                SetWindowTextW(controls_[id], text.str().c_str());
+                editorSync_ = false;
+                readControls(false);
+                return 0;
+            }
+        }
+        break;
+    case WM_NOTIFY:
+        if (editor && l)
+        {
+            auto hdr = (NMHDR *)l;
+            if (hdr->code == NM_CUSTOMDRAW && sliderControl((int)hdr->idFrom - SliderOffset))
+            {
+                auto draw = (NMCUSTOMDRAW *)l;
+                if (draw->dwDrawStage == CDDS_PREPAINT)
+                    return CDRF_NOTIFYITEMDRAW;
+                if (draw->dwDrawStage == CDDS_ITEMPREPAINT)
+                {
+                    Color tint = draw->dwItemSpec == TBCD_THUMB
+                                     ? colors_.accent
+                                     : blend(colors_.background, colors_.primary, .24f);
+                    HBRUSH brush = CreateSolidBrush(
+                        RGB((BYTE)(tint.r * 255), (BYTE)(tint.g * 255), (BYTE)(tint.b * 255)));
+                    auto oldBrush = SelectObject(draw->hdc, brush);
+                    auto oldPen = SelectObject(draw->hdc, GetStockObject(NULL_PEN));
+                    auto r = draw->rc;
+                    int radius = draw->dwItemSpec == TBCD_THUMB ? (int)(8 * v.scale) : (int)(4 * v.scale);
+                    RoundRect(draw->hdc, r.left, r.top, r.right, r.bottom, radius, radius);
+                    SelectObject(draw->hdc, oldPen);
+                    SelectObject(draw->hdc, oldBrush);
+                    DeleteObject(brush);
+                    return CDRF_SKIPDEFAULT;
+                }
+            }
+        }
+        break;
     case WM_COMMAND:
         if (editor)
         {
@@ -2021,9 +2262,10 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.0-native-preview"},
+    Json j = {{"version", "2.0.0-native-preview.2"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
+              {"refreshing", state_.refreshing},
               {"quotaWindows", state_.data.windows.size()},
               {"hasResetCreditCount", state_.data.creditCount.has_value()},
               {"trayAdded", trayAdded_},
@@ -2037,7 +2279,8 @@ void Application::finishVerification()
               {"userObjects", GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS)},
               {"singleExecutable", true},
               {"usesDotNet", false},
-              {"systemPanelOcclusionFixed", false}};
+              {"taskbarOwnerRequested", taskbarOwner_ != nullptr},
+              {"systemPanelOcclusionAutomaticallyVerified", false}};
     j["observations"] = verification_;
     std::ofstream out(report_, std::ios::binary);
     if (out)

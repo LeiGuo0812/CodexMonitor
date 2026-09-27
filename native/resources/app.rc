@@ -4,8 +4,8 @@
 201 RCDATA "../vendor/LICENSE.nlohmann-json"
 202 RCDATA "../../THIRD-PARTY-NOTICES.md"
 1 VERSIONINFO
-FILEVERSION 2,0,0,0
-PRODUCTVERSION 2,0,0,0
+FILEVERSION 2,0,0,2
+PRODUCTVERSION 2,0,0,2
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,9 +14,9 @@ BEGIN
   BLOCK "040904B0"
   BEGIN
    VALUE "FileDescription", "CodexMonitor Native\0"
-   VALUE "FileVersion", "2.0.0-native-preview\0"
+   VALUE "FileVersion", "2.0.0-native-preview.2\0"
    VALUE "ProductName", "CodexMonitor\0"
-   VALUE "ProductVersion", "2.0.0-native-preview\0"
+   VALUE "ProductVersion", "2.0.0-native-preview.2\0"
   END
  END
  BLOCK "VarFileInfo"

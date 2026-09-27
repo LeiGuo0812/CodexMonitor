@@ -1,4 +1,27 @@
-# 音量面板遮挡调查（2026-09-27，尚未修复）
+# 音量面板遮挡调查（2026-09-27）
+
+## 原生预览版 2：窗口所有权方案
+
+先前尝试的是子窗口挂接（`SetParent` / `WS_CHILD`），此次保留 `WS_POPUP`，只使用 `SetWindowLongPtrW(GWLP_HWNDPARENT)` 设置任务栏为 owner。官方描述了 [Owned Windows 的层级关系](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows)；特定 Windows 版本中系统 band 联动行为仍以实机观察为准，不假定跨版本保证。
+
+本机临时实验的 60 秒记录：
+
+- 正常阶段：widget band 1、taskbar band 1，owner 为任务栏。
+- 面板打开阶段（采样第 28–55 秒）：widget band 6、taskbar band 6，owner 暂时报告为 0；数字条中心的命中窗口始终是 `CodexMonitor.Native.Widget`。
+- 面板关闭后（第 56 秒起）：两者回到 band 1，owner 恢复。
+- 整段数字条坐标保持 `(2954,2081)-(3166,2155)`。用户确认文字始终可见。
+
+将方案接入原生程序后，用户再次确认两次打开／关闭均可见，随后反馈重复切换时发生短暂闪动。已去除每 250 毫秒重新置顶，避免在系统临时拆分所有权组时主动 show/raise，并按系统进程路径排除 Shell 过渡窗体被误判为全屏。消除闪动不能仅凭编译或静态坐标检查宣称完成，需要继续观察。
+
+随后以约 50 毫秒间隔采样，确认拖动前开关面板时命中始终为数字条；面板仍处于 band 6 时拖出并重吸附后，数字条停留在 band 6，任务栏却正常在 band 1 / 6 间切换，再次开面板时命中变为 `Shell_TrayWnd`。用户反馈与该记录一致。原因是拖动期间立即清除 owner，破坏了 Windows 临时保存的所有权组。修复为：已建立关系且 owner 暂时报告为 0 时不更改关系，等系统恢复 owner 后再按当前悬浮／吸附模式处理；位置移动即时进行。
+
+最终复测：用户按“打开音量面板 → 拖出 → 拖回吸附 → 重新打开音量面板”操作后，明确反馈“仍可见且不闪动”。100 秒采样记录中所有权在面板关闭后恢复，widget 与 taskbar 都回到 band 1；未再出现此前拖动后 widget 被留在 band 6 的情况。此结论限于本机、本次操作，不代替其他 Windows 构建版本和 Explorer 重启的验证。
+
+吸附时建立 owner 关系，拖出时解除；保留任务栏内位置。后台控制 HWND 独立于任务栏，数字条被销毁时可重建；托盘与异步查询投递给控制 HWND。生命周期检查覆盖本程序数字条销毁／重建，未主动重启用户的 Explorer。
+
+产品没有调用 `SetWindowBand`、`CreateWindowInBand`，没有注入 Explorer，也没有启用 UIAccess；`GetWindowBand` 仅用于本次忽略目录下的诊断脚本。正常程序不产生这些采样日志。
+
+以下为旧架构的历史调查，结论仅适用于当时已经验证的原型。
 
 ## 发行状态
 

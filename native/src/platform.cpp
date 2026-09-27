@@ -417,6 +417,16 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
 {
     Query q;
     q.retrieved = now();
+    const auto deadline = GetTickCount64() + 30000;
+    auto budget = [&](ULONGLONG maximum)
+    {
+        auto current = GetTickCount64();
+        if (stop)
+            throw std::runtime_error("CANCELLED");
+        if (current >= deadline)
+            throw std::runtime_error("TIMEOUT");
+        return (DWORD)std::min(maximum, deadline - current);
+    };
     try
     {
         static fs::path verified;
@@ -430,6 +440,7 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
         fs::path chosen;
         for (auto &p : candidates)
         {
+            budget(5000);
             if (stop)
                 break;
             if (p == verified && now() - verifiedAt < 900)
@@ -439,7 +450,7 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
             }
             try
             {
-                Process version(p, L"--version", stop, 5000);
+                Process version(p, L"--version", stop, budget(5000));
                 if (version.line().starts_with("codex-cli "))
                 {
                     chosen = verified = p;
@@ -456,7 +467,7 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
             q.error = "CODEX_NOT_A_CLI";
             return q;
         }
-        Process process(chosen, L"app-server", stop, 20000);
+        Process process(chosen, L"app-server", stop, budget(20000));
         auto init = process.request(
             1, "initialize",
             {{"clientInfo",
@@ -556,6 +567,11 @@ Placement placeWidget(const Settings &s, int width, int height, float scale)
             int padding = (int)ceil(8 * scale);
             int x = tray->left - padding - width + (int)round((s.horizontal + 360) * scale);
             int y = bar.top + (bar.bottom - bar.top - height) / 2;
+            // Docking is accepted anywhere along the taskbar. Clamp the drop to
+            // the nearest safe slot instead of reverting to floating for an x mismatch.
+            int first = list->right + padding, last = tray->left - padding - width;
+            if (s.position == 1 && first <= last)
+                x = std::clamp(x, first, last);
             if (x >= list->right + padding && x + width <= tray->left - padding)
                 return {{x, y, x + width, y + height}, true};
         }
@@ -582,6 +598,28 @@ bool fullscreenForeground(HWND own)
                       L"ControlCenterWindow", L"NotifyIconOverflowWindow"})
         if (wcscmp(c, skip) == 0)
             return false;
+    // Quick Settings can use a screen-sized shell host during its animation.
+    // Identify the system executable as well as the public window classes.
+    Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid));
+    if (process)
+    {
+        wchar_t path[32768]{};
+        DWORD length = (DWORD)std::size(path);
+        if (QueryFullProcessImageNameW(process.get(), 0, path, &length))
+        {
+            auto name = fs::path(path).filename().wstring();
+            auto full = fs::path(path).wstring();
+            wchar_t windows[32768]{};
+            GetWindowsDirectoryW(windows, (UINT)std::size(windows));
+            std::wstring systemRoot = std::wstring(windows) + L"\\";
+            bool system = full.size() > systemRoot.size() &&
+                          _wcsnicmp(full.c_str(), systemRoot.c_str(), systemRoot.size()) == 0;
+            if (system && (name == L"ShellExperienceHost.exe" || name == L"ShellHost.exe" ||
+                           name == L"StartMenuExperienceHost.exe" || name == L"SearchHost.exe" ||
+                           name == L"explorer.exe"))
+                return false;
+        }
+    }
     if (IsZoomed(h) && (GetWindowLongPtrW(h, GWL_STYLE) & WS_CAPTION))
         return false;
     RECT r{};
@@ -669,8 +707,8 @@ void writeDiagnostic(const std::string &code) noexcept
         auto dir = settingsDirectory();
         fs::create_directories(dir);
         std::ofstream out(dir / L"native-failure.json");
-        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview"}}.dump(
-            2);
+        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview.2"}}
+                   .dump(2);
     }
     catch (...)
     {

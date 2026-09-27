@@ -17,10 +17,12 @@ while(!$process.WaitForExit(1000)){
 }
 if($process.ExitCode -ne 0 -or !(Test-Path -LiteralPath $report)){throw 'Native verification did not produce a complete report.'}
 $after=if(Test-Path -LiteralPath $settings){(Get-FileHash -LiteralPath $settings).Hash}else{''}
-if($before -ne $after){throw 'Verification changed the settings file.'}
+if($before -ne $after){throw 'The settings file changed during verification; configuration isolation is inconclusive if another instance or user edited it.'}
 $result=Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
 if(!$result.querySucceeded -or !$result.trayAdded -or !$result.widgetVisible -or
    !$result.observations.controlsSynchronized -or !$result.observations.menuSynchronized -or
    !$result.observations.clickHandlersReuseDetails -or !$result.observations.viewsReleased -or
+   !$result.observations.slidersSynchronized -or !$result.observations.detailButtonLabelsFit -or
+   !$result.observations.widgetRecovery -or $result.refreshing -or
    $result.observations.detailsBottomGapPixels -ne 0){throw "Native checks failed; inspect $report"}
 Write-Output $report

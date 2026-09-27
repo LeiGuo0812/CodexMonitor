@@ -68,6 +68,8 @@ struct State
     std::optional<Quota> rememberedFive;
     std::string account, error;
     Seconds updated = 0;
+    Seconds creditsUpdated = 0;
+    bool creditDetailsStale = false;
     bool stale = false, refreshing = false, missingFive = false;
     void apply(Query query);
     std::optional<Quota> find(Kind kind) const;
@@ -85,6 +87,7 @@ struct Settings
     Json toJson() const;
 };
 bool validColor(const std::wstring &value);
+bool shouldSnapToTaskbar(RECT widget, RECT taskbar, float scale);
 Query parseReplies(const Json &account, const Json &limits);
 std::string fingerprint(std::string value);
 std::wstring errorLabel(const std::string &error);

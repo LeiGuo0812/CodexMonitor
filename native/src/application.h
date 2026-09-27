@@ -58,6 +58,8 @@ class Application
     Palette colors_;
     State state_;
     HWND widget_ = nullptr, tooltip_ = nullptr;
+    HWND controller_ = nullptr, taskbarOwner_ = nullptr;
+    bool snapReady_ = false;
     Canvas widgetCanvas_;
     View details_, editor_;
     std::map<int, HWND> controls_;
@@ -88,6 +90,7 @@ class Application
     HWINEVENTHOOK foregroundHook_ = nullptr, shellHook_ = nullptr;
     HANDLE networkNotification_ = nullptr;
     Seconds lastNetworkRefresh_ = 0;
+    ULONGLONG queryStarted_ = 0;
     Handle activateEvent_;
     bool verify_ = false;
     fs::path report_;
@@ -105,6 +108,8 @@ class Application
     void receiveQuery();
     void appearance();
     void place(bool immediate = false);
+    void createWidget();
+    void attachTaskbar(HWND owner);
     void drawWidget();
     void updateTooltip();
     void addTray();

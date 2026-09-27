@@ -33,6 +33,14 @@ int main()
     try
     {
         const auto five = window(Kind::FiveHour, 100), week = window(Kind::Week, 20);
+        RECT bar{0, 1000, 1920, 1048};
+        for (int left : {0, 700, 1650})
+            require(shouldSnapToTaskbar({left, 968, left + 200, 1008}, bar, 1),
+                    "Eight DIP depth snaps at left, centre and right");
+        require(!shouldSnapToTaskbar({0, 967, 200, 1007}, bar, 1), "Shallow overlap does not snap");
+        require(!shouldSnapToTaskbar({1930, 980, 2130, 1020}, bar, 1), "Outside taskbar does not snap");
+        require(shouldSnapToTaskbar({0, 946, 350, 1014}, bar, 1.75f), "Snap depth scales with DPI");
+        require(!shouldSnapToTaskbar({0, 946, 350, 1013}, bar, 1.75f), "Scaled depth threshold respected");
         State state;
         state.apply(query("a", {week, five}));
         require(state.selected && state.selected->kind == Kind::FiveHour,
@@ -91,6 +99,36 @@ int main()
         Json limits = Json::parse(
             R"({"result":{"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":25,"windowDurationMins":10080,"resetsAt":1791073118},"secondary":{"usedPercent":99.5,"windowDurationMins":300,"resetsAt":1790900000}},"other":{"primary":{"usedPercent":101,"windowDurationMins":60,"resetsAt":1791073118000}}},"rateLimits":{"primary":{"usedPercent":0,"windowDurationMins":300}},"rateLimitResetCredits":{"availableCount":4,"credits":[{"id":"a","status":"available","expiresAt":1991000000},{"id":"b","status":"available","expiresAt":1991000000},{"id":"c","status":"active","expiresAt":null}]}}})");
         auto parsed = parseReplies(account, limits);
+        State creditState;
+        creditState.refreshing = true;
+        creditState.apply(parsed);
+        require(!creditState.refreshing, "Successful completion clears refreshing state");
+        auto countOnly = parsed;
+        countOnly.credits.clear();
+        countOnly.creditDetails = Query::CountOnly;
+        creditState.apply(countOnly);
+        require(creditState.data.credits.size() == 3 && creditState.creditDetailsStale,
+                "Count-only response preserves same-account same-count details as stale");
+        countOnly.creditCount = 2;
+        creditState.apply(countOnly);
+        require(creditState.data.credits.empty() && !creditState.creditDetailsStale,
+                "Changed count does not retain potentially spent credits");
+        creditState.apply(parsed);
+        countOnly.account = "different";
+        countOnly.creditCount = parsed.creditCount;
+        creditState.apply(countOnly);
+        require(creditState.data.credits.empty() && !creditState.creditsUpdated,
+                "Changed account does not inherit credit details");
+        creditState.apply(parsed);
+        auto emptyDetails = parsed;
+        emptyDetails.credits.clear();
+        emptyDetails.creditDetails = Query::Partial;
+        creditState.apply(emptyDetails);
+        require(creditState.data.credits.empty() && !creditState.creditDetailsStale,
+                "Explicit empty credit list clears cached details");
+        creditState.refreshing = true;
+        creditState.apply(fail);
+        require(!creditState.refreshing, "Failed completion also clears refreshing state");
         require(parsed.success && parsed.windows.size() == 3, "Prefer complete bucket map over legacy");
         require(parsed.windows[0].kind == Kind::Week && parsed.windows[1].kind == Kind::FiveHour,
                 "Duration determines kind");

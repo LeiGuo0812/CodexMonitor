@@ -25,14 +25,15 @@ Color blend(Color a, Color b, float t)
 Palette palette(const Settings &s)
 {
     bool dark = s.mode == 2 || (s.mode == 0 && systemDark(true));
-    const wchar_t *light[4][5] = {{L"#E9F3FF", L"#12263F", L"#506887", L"#256FD4", L"#8854CF"},
-                                  {L"#F5E2C9", L"#3B291D", L"#795B43", L"#A04F21", L"#197F93"},
-                                  {L"#DCEAE4", L"#18352C", L"#506C61", L"#19785C", L"#986B23"},
-                                  {L"#E9DEFC", L"#31234B", L"#716084", L"#7950BD", L"#157F84"}};
-    const wchar_t *deep[4][5] = {{L"#172D44", L"#EAF5FF", L"#B0CBE1", L"#7EBEFF", L"#C8A1FF"},
-                                 {L"#38251D", L"#FFF1DF", L"#D7B99A", L"#F2B16D", L"#6ED8E1"},
-                                 {L"#202828", L"#EFF8F4", L"#AEC5BE", L"#63D7B1", L"#E5AF65"},
-                                 {L"#191B39", L"#F1EDFF", L"#BCB3DE", L"#BA9FFF", L"#50D9D0"}};
+    // Neutral mist, warm sand, graphite grey and midnight blue, in both modes.
+    const wchar_t *light[4][5] = {{L"#F6F8FB", L"#233348", L"#54677D", L"#347ACC", L"#6372B4"},
+                                  {L"#FAF2E5", L"#483829", L"#7B6650", L"#A86B2F", L"#768655"},
+                                  {L"#E8EBEF", L"#2A2E35", L"#626A76", L"#566D89", L"#8A6E96"},
+                                  {L"#E8EEF9", L"#202F50", L"#53698B", L"#426ECD", L"#8870B9"}};
+    const wchar_t *deep[4][5] = {{L"#485565", L"#FAFCFF", L"#DAE3ED", L"#A5D3FF", L"#CED4FF"},
+                                 {L"#594D40", L"#FFF8ED", L"#E7D8C3", L"#F2C587", L"#C5D7A6"},
+                                 {L"#41464F", L"#F5F7FA", L"#D0D5DE", L"#ADC2DA", L"#D2BBDD"},
+                                 {L"#2F4063", L"#F1F6FF", L"#C5D4EE", L"#90BCFF", L"#BFB0F0"}};
     Palette p;
     p.dark = dark;
     p.contrast = highContrast();

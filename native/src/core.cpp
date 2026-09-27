@@ -337,6 +337,8 @@ void State::apply(Query q)
         rememberedFive.reset();
         data = {};
         updated = 0;
+        creditsUpdated = 0;
+        creditDetailsStale = false;
         account.clear();
     }
     if (!q.account.empty())
@@ -347,8 +349,20 @@ void State::apply(Query q)
     if (!q.success)
     {
         stale = selected.has_value();
+        creditDetailsStale = !data.credits.empty();
         return;
     }
+    // A null detail list is not a failed read or an authoritative empty list.
+    // Reuse only the same known account's details with an unchanged known count.
+    bool reuseCredits = q.creditDetails == Query::CountOnly && !q.account.empty() &&
+                        q.account == data.account && q.creditCount && q.creditCount == data.creditCount &&
+                        !data.credits.empty();
+    creditDetailsStale = reuseCredits;
+    if (reuseCredits)
+        q.credits = data.credits;
+    else
+        creditsUpdated =
+            (q.creditDetails == Query::Complete || q.creditDetails == Query::Partial) ? q.retrieved : 0;
     data = std::move(q);
     updated = data.retrieved;
     stale = false;
@@ -374,6 +388,18 @@ std::optional<Quota> State::find(Kind k) const
         if (q.kind == k)
             return q;
     return {};
+}
+bool shouldSnapToTaskbar(RECT widget, RECT bar, float scale)
+{
+    int width = std::min(widget.right, bar.right) - std::max(widget.left, bar.left);
+    int height = std::min(widget.bottom, bar.bottom) - std::max(widget.top, bar.top);
+    if (width <= 0 || height <= 0 || !std::isfinite(scale) || scale <= 0)
+        return false;
+    bool horizontal = bar.right - bar.left >= bar.bottom - bar.top;
+    int barDepth = horizontal ? bar.bottom - bar.top : bar.right - bar.left;
+    int widgetDepth = horizontal ? widget.bottom - widget.top : widget.right - widget.left;
+    float threshold = std::min({8.f * scale, barDepth / 2.f, widgetDepth / 2.f});
+    return (horizontal ? height : width) >= threshold;
 }
 bool validColor(const std::wstring &v)
 {

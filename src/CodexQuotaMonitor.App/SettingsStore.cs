@@ -44,7 +44,7 @@ internal sealed class SettingsStore
         FontSize = double.IsFinite(settings.FontSize) ? Math.Clamp(settings.FontSize, 13, 18) : 15,
         HorizontalOffsetDip = Math.Clamp(settings.HorizontalOffsetDip, -4000, 0),
         VerticalOffsetDip = Math.Clamp(settings.VerticalOffsetDip, 0, 160),
-        RefreshIntervalSeconds = Math.Clamp(settings.RefreshIntervalSeconds, 30, 600),
+        RefreshIntervalSeconds = RefreshSchedule.Normalize(settings.RefreshIntervalSeconds),
         PositionMode = Enum.IsDefined(settings.PositionMode) ? settings.PositionMode : PositionMode.Automatic,
         ThemeMode = Enum.IsDefined(settings.ThemeMode) ? settings.ThemeMode : ThemeMode.FollowSystem,
         ThemePreset = Enum.IsDefined(settings.ThemePreset) ? settings.ThemePreset : ThemePreset.MistWhite

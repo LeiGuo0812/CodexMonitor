@@ -14,6 +14,9 @@ internal static class RuntimeVerification
         {
             var original = runtime.Settings;
             var startup = VerifyStartup(runtime);
+            runtime.OpenSettings();
+            await Task.Delay(200);
+            var refreshEditor = await runtime.SettingsForVerification!.VerifyRefreshEditorAsync();
             runtime.OpenDetails();
             dashboard = runtime.DashboardForVerification!;
             var settingsChecks = new List<object>();
@@ -67,6 +70,7 @@ internal static class RuntimeVerification
             report = new
             {
                 Startup = startup,
+                RefreshEditor = refreshEditor,
                 Menu = new { StartupPresent = idleMenu.GetProperty("StartupPresent").GetBoolean(),
                     CachePresent = idleMenu.GetProperty("CachePresent").GetBoolean(),
                     CommandsMapped = idleMenu.GetProperty("CommandsMapped").GetBoolean(),
@@ -134,6 +138,12 @@ internal static class RuntimeVerification
             runtime.ApplyPreviewSettings(disabled);
             var disableWarning = runtime.CommitSettings(disabled);
             var disabledOk = key.GetValue(name) is null;
+            var alternate = disabled.RefreshIntervalSeconds == 180 ? 120 : 180;
+            runtime.ApplyPreviewSettings(disabled with { RefreshIntervalSeconds = alternate });
+            var previewDidNotReschedule = runtime.ActiveRefreshIntervalSeconds == disabled.RefreshIntervalSeconds;
+            runtime.CommitSettings(disabled with { RefreshIntervalSeconds = alternate });
+            var saveRescheduled = runtime.ActiveRefreshIntervalSeconds == alternate && new SettingsStore().Load().RefreshIntervalSeconds == alternate;
+            runtime.CommitSettings(disabled);
             // A menu toggle must not persist an unrelated appearance preview.
             runtime.OpenSettings();
             var preview = disabled with { FontSize = disabled.FontSize == 18 ? 17 : 18 };
@@ -151,7 +161,8 @@ internal static class RuntimeVerification
                 SavedAfterPreview = enableWarning is null && disableWarning is null,
                 MenuToggleWorks = menuEnable is null && menuDisable is null && enabledMenu.GetProperty("StartupChecked").GetBoolean()
                     && !disabledMenu.GetProperty("StartupChecked").GetBoolean() && key.GetValue(name) is null,
-                MenuPreservesDraft = preservedDraft && didNotSavePreview && cancelKeptStartup };
+                MenuPreservesDraft = preservedDraft && didNotSavePreview && cancelKeptStartup,
+                RefreshPreviewDidNotReschedule = previewDidNotReschedule, RefreshSaveRescheduled = saveRescheduled };
         }
         finally
         {

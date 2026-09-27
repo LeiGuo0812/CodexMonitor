@@ -28,6 +28,8 @@ public sealed partial class SettingsWindow : Window
         _original = settings;
         _draft = settings;
         InitializeComponent();
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(SettingsTitleDragRegion);
         Closed += (_, _) =>
         {
             _closed = true;
@@ -72,6 +74,7 @@ public sealed partial class SettingsWindow : Window
         AccentColorBox.Text = settings.CustomAccent;
         CodexPathBox.Text = settings.CodexExecutablePath ?? string.Empty;
         StartupSwitch.IsOn = settings.StartWithWindows;
+        RefreshIntervalBox.Text = (settings.RefreshIntervalSeconds / 60.0).ToString("0.########", System.Globalization.CultureInfo.CurrentCulture);
         _loading = false;
         UpdatePreview();
     }
@@ -89,6 +92,17 @@ public sealed partial class SettingsWindow : Window
     }
     private void SettingChanged(object sender, RangeBaseValueChangedEventArgs e) => UpdateDraftFromControls();
     private void SettingChanged(object sender, RoutedEventArgs e) => UpdateDraftFromControls();
+    private void RefreshIntervalChanged(object sender, TextChangedEventArgs e) => UpdateDraftFromControls();
+
+    private bool TryReadRefreshInterval(out int seconds)
+    {
+        seconds = _draft.RefreshIntervalSeconds;
+        if (!double.TryParse(RefreshIntervalBox.Text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.CurrentCulture, out var minutes) ||
+            !double.IsFinite(minutes) || minutes < 0.5 || minutes > 60) return false;
+        seconds = RefreshSchedule.Normalize((int)Math.Round(minutes * 60));
+        return true;
+    }
 
     private void UpdateDraftFromControls()
     {
@@ -115,7 +129,10 @@ public sealed partial class SettingsWindow : Window
             CustomSecondaryText = colors.Secondary,
             CustomAccent = colors.Accent,
             CodexExecutablePath = string.IsNullOrWhiteSpace(CodexPathBox.Text) ? null : CodexPathBox.Text.Trim(),
-            StartWithWindows = StartupSwitch.IsOn
+            StartWithWindows = StartupSwitch.IsOn,
+            RefreshIntervalSeconds = TryReadRefreshInterval(out var refreshSeconds)
+                ? refreshSeconds
+                : _draft.RefreshIntervalSeconds
         };
         QueuePreview();
     }
@@ -161,10 +178,11 @@ public sealed partial class SettingsWindow : Window
             WindowAppearance.ParseColor(colors.Accent, Colors.Blue));
         PreviewState.Foreground = new SolidColorBrush(taskbar.HighContrast ? taskbar.Foreground : Color.FromArgb(255, 49, 150, 108));
         PreviewMain.FontSize = _draft.FontSize;
-        WindowAppearance.ApplyTheme(SettingsRoot, _draft);
+        WindowAppearance.ApplyTheme(SettingsWindowRoot, _draft);
         WindowAppearance.ApplyGlass(this, _draft);
-        SettingsRoot.Background = WindowAppearance.Translucent(colors.Background, SystemBackdrop is GlassBackdrop ? 0.1 : 1);
-        SettingsRoot.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(primary));
+        // One surface spans the caption buttons, drag region and settings content.
+        SettingsWindowRoot.Background = WindowAppearance.Translucent(colors.Background, SystemBackdrop is GlassBackdrop ? 0.12 : 1);
+        SettingsWindowRoot.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(primary));
         var primaryContrast = ContrastRatio(background, primary);
         var secondaryContrast = ContrastRatio(background, secondary);
         ContrastHint.Text = primaryContrast < 4.5 || secondaryContrast < 3
@@ -234,6 +252,12 @@ public sealed partial class SettingsWindow : Window
 
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
+        if (!TryReadRefreshInterval(out _))
+        {
+            RefreshIntervalHint.Text = "请输入 0.5–60 分钟的刷新间隔，再保存设置。";
+            RefreshIntervalBox.Focus(FocusState.Programmatic);
+            return;
+        }
         _ = ReadCustomColors(out var colorsValid);
         if (!colorsValid)
         {
@@ -305,11 +329,32 @@ public sealed partial class SettingsWindow : Window
         _runtime.ApplyPreviewSettings(_draft);
     }
 
+    internal async Task<object> VerifyRefreshEditorAsync()
+    {
+        var before = _runtime.ActiveRefreshIntervalSeconds;
+        var alternate = before == 180 ? 120 : 180;
+        RefreshIntervalBox.Text = (alternate / 60.0).ToString(System.Globalization.CultureInfo.CurrentCulture);
+        await Task.Delay(100);
+        var previewOnly = _runtime.ActiveRefreshIntervalSeconds == before && _draft.RefreshIntervalSeconds == alternate;
+        var boundsCorrect = true;
+        foreach (var (minutes, expected) in new[] { (0.5, true), (60.0, true), (0.49, false), (60.1, false), (double.NaN, false) })
+        {
+            RefreshIntervalBox.Text = minutes.ToString(System.Globalization.CultureInfo.CurrentCulture);
+            boundsCorrect &= TryReadRefreshInterval(out _) == expected;
+        }
+        RefreshIntervalBox.Text = "";
+        boundsCorrect &= !TryReadRefreshInterval(out _);
+        CancelButton_Click(this, new RoutedEventArgs());
+        return new { PreviewOnly = previewOnly, CancelRestored = _runtime.Settings.RefreshIntervalSeconds == before,
+            BoundsCorrect = boundsCorrect, DefaultSeconds = new MonitorSettings().RefreshIntervalSeconds };
+    }
+
     internal async Task<object> VerifyPresetPreviewAsync()
     {
         var distinct = new HashSet<string>();
         var widgetPalettes = new HashSet<string>();
         var tagColors = new HashSet<string>();
+        var unifiedTitleBar = true;
         for (var index = 0; index < 24; index++)
         {
             ThemePresetBox.SelectedIndex = index % 5;
@@ -319,6 +364,17 @@ public sealed partial class SettingsWindow : Window
             DetailsOpacitySlider.Value = 0.4 + index % 7 * 0.1;
             FontSizeSlider.Value = 13 + index % 6;
             await Task.Delay(45); // Let composition, layout and event callbacks run between edits.
+            var primary = WindowAppearance.ParseColor(WindowAppearance.Colors(_draft).PrimaryText, Colors.Black);
+            unifiedTitleBar &= ExtendsContentIntoTitleBar &&
+                AppWindow.TitleBar.BackgroundColor == Colors.Transparent &&
+                AppWindow.TitleBar.InactiveBackgroundColor == Colors.Transparent &&
+                AppWindow.TitleBar.ButtonBackgroundColor == Colors.Transparent &&
+                AppWindow.TitleBar.ButtonInactiveBackgroundColor == Colors.Transparent &&
+                AppWindow.TitleBar.ButtonForegroundColor == primary &&
+                SettingsRoot.Background is null && SettingsWindowRoot.Background is SolidColorBrush &&
+                ReferenceEquals(SettingsRoot.Parent, SettingsWindowRoot) &&
+                ReferenceEquals(SettingsTitleDragRegion.Parent, SettingsWindowRoot) &&
+                SettingsTitleDragRegion.ActualHeight > 0;
             var widget = System.Text.Json.JsonSerializer.SerializeToElement(_runtime.ReadWidgetVerification());
             widgetPalettes.Add(widget.GetProperty("PaletteSignature").GetString()!);
             tagColors.Add(widget.GetProperty("TagColor").GetString()!);
@@ -326,6 +382,7 @@ public sealed partial class SettingsWindow : Window
         var result = new { Opened = true, EditCycles = 24, DistinctPresets = distinct.Count,
             WidgetPaletteCount = widgetPalettes.Count,
             TagColorCount = tagColors.Count,
+            UnifiedTitleBar = unifiedTitleBar,
             PreviewVisible = PreviewMain.Text.Length > 0, Bounds = WindowPlacement.ReadVerification(this),
             FooterOutsideScroller = ReferenceEquals(SettingsActions.Parent, SettingsRoot),
             FooterHasLayout = SettingsActions.ActualHeight > 0 };

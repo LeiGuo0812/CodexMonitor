@@ -14,6 +14,7 @@ public sealed class AppRuntime : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private readonly QuotaMonitorService _monitor;
+    private readonly RefreshSchedule _refreshSchedule;
     private readonly NetworkAvailabilityChangedEventHandler _networkAvailabilityHandler;
     private WidgetWindow? _widget;
     private DashboardWindow? _dashboard;
@@ -26,6 +27,7 @@ public sealed class AppRuntime : IDisposable
     public AppRuntime()
     {
         _settings = _settingsStore.Load();
+        _refreshSchedule = new RefreshSchedule(_settings.RefreshIntervalSeconds);
         _monitor = new QuotaMonitorService(new CodexAppServerQuotaSource(() => _settings.CodexExecutablePath));
         _monitor.StateChanged += OnMonitorStateChanged;
         _networkAvailabilityHandler = (_, args) =>
@@ -38,6 +40,7 @@ public sealed class AppRuntime : IDisposable
 
     public MonitorSettings Settings => _settings;
     public MonitorViewState State => _monitor.Current;
+    internal int ActiveRefreshIntervalSeconds => _refreshSchedule.IntervalSeconds;
 
     public void Start()
     {
@@ -121,6 +124,7 @@ public sealed class AppRuntime : IDisposable
     public string? CommitSettings(MonitorSettings settings)
     {
         _settings = _settingsStore.Save(settings);
+        _refreshSchedule.SetInterval(_settings.RefreshIntervalSeconds);
         string? warning = null;
         // Preview already contains the new toggle value. Always sync on save.
         try { StartupRegistration.SetEnabled(_settings.StartWithWindows); }
@@ -209,11 +213,8 @@ public sealed class AppRuntime : IDisposable
         while (!_lifetime.IsCancellationRequested)
         {
             var state = await _monitor.RefreshAsync(_lifetime.Token).ConfigureAwait(false);
-            var seconds = state.QueryError is null
-                ? _settings.RefreshIntervalSeconds
-                : Math.Min(900, 60 * (int)Math.Pow(2, Math.Min(failures++, 4)));
-            if (state.QueryError is null) failures = 0;
-            try { await Task.Delay(TimeSpan.FromSeconds(seconds), _lifetime.Token).ConfigureAwait(false); }
+            failures = state.QueryError is null ? 0 : Math.Min(failures + 1, 5);
+            try { await _refreshSchedule.WaitAsync(failures, _lifetime.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
     }

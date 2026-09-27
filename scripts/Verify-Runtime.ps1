@@ -35,6 +35,10 @@ if (!$result.Startup.MenuToggleWorks -or !$result.Startup.MenuPreservesDraft -or
     throw 'Context-menu startup/cache entries or their state transitions failed.'
 }
 if (!$result.Cache.ActivePreserved -or !$result.Cache.CleanupRequested) { throw 'Live cache cleanup failed.' }
+if (!$result.RefreshEditor.PreviewOnly -or !$result.RefreshEditor.CancelRestored -or !$result.RefreshEditor.BoundsCorrect -or
+    $result.RefreshEditor.DefaultSeconds -ne 60 -or !$result.Startup.RefreshPreviewDidNotReschedule -or !$result.Startup.RefreshSaveRescheduled) {
+    throw 'Refresh interval defaults, editor or live scheduling checks failed.'
+}
 if ($result.Cache.Bundled) {
     $deadline = [DateTime]::UtcNow.AddSeconds(25)
     while ((Test-Path -LiteralPath $result.Cache.ActiveDirectory) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 250 }
@@ -77,6 +81,7 @@ foreach ($sample in $result.WidgetSamples) {
     }
 }
 foreach ($check in $result.SettingsChecks) {
+    if (!$check.UnifiedTitleBar) { throw 'Settings caption buttons and content must share a single themed surface.' }
     if ($check.WidgetPaletteCount -ne 1) { throw 'Changing application themes changed the taskbar widget palette.' }
     if (!$result.FinalWidget.SystemHighContrast -and $check.TagColorCount -lt 4) { throw 'Widget tag colors did not follow theme changes.' }
 }

@@ -38,7 +38,7 @@ public sealed record MonitorSettings
     public double FontSize { get; init; } = 15;
     public int HorizontalOffsetDip { get; init; } = -360;
     public int VerticalOffsetDip { get; init; } = 12;
-    public int RefreshIntervalSeconds { get; init; } = 60;
+    public int RefreshIntervalSeconds { get; init; } = RefreshSchedule.DefaultSeconds;
     public bool StartWithWindows { get; init; }
 }
 

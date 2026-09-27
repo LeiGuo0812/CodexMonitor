@@ -19,8 +19,8 @@ static constexpr UINT TickTimer = 1, HoverTimer = 2, AnimationTimer = 3, ShellTr
 enum ControlId
 {
     PositionControl = 200,
-    ModeControl,
-    ThemeControl,
+    // 201 was the legacy independent light/dark selector.
+    ThemeControl = 202,
     OpacityControl,
     FontControl,
     HorizontalControl,
@@ -1092,8 +1092,8 @@ void Application::drawWidget()
     auto tagColor = contrast_ ? primary : color(taskbarDark_ ? L"#91C5FF" : L"#286DB7");
     widgetCanvas_.text(tag, box(x, y + 4, 24, 18), 10, tagColor, true);
     x += drawing_.measure(tag, 10, true).width + 7;
-    widgetCanvas_.text(state_.error.empty() && !state_.stale ? L"●" : L"!", box(x, y + 5, 12, 16), 8,
-                       state_.error.empty() && !state_.stale ? tagColor : color(L"#BC4844"), true);
+    // The taskbar marker is decorative and stable; query state lives in details.
+    widgetCanvas_.text(L"●", box(x, y + 5, 12, 16), 8, tagColor, true);
     widgetCanvas_.text(L"重置 " + countdown(q ? q->reset : std::nullopt),
                        box(11, y + line, w - 22, h - y - line), std::max(10.f, font - 4), secondary);
     widgetCanvas_.end();
@@ -1169,8 +1169,7 @@ HMENU Application::buildMenu()
     for (int i = 0; i < 5; i++)
         AppendMenuW(theme, MF_STRING | (settings_.preset == i ? MF_CHECKED : 0), ThemeMist + i, themes[i]);
     AppendMenuW(menu, MF_STRING, Details, L"额度详情");
-    AppendMenuW(menu, MF_STRING | (state_.refreshing ? MF_GRAYED : 0), Refresh,
-                state_.refreshing ? L"刷新中…" : L"刷新");
+    AppendMenuW(menu, MF_STRING | (state_.refreshing ? MF_GRAYED : 0), Refresh, L"刷新");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)position, L"位置模式");
     AppendMenuW(menu, MF_POPUP, (UINT_PTR)theme, L"主题预设");
@@ -1445,9 +1444,10 @@ void Application::redrawViews()
 }
 void Application::card(Canvas &c, D2D1_RECT_F r, Color tint)
 {
-    c.rect(r, alpha(blend(colors_.background, tint, colors_.dark ? .23f : .12f), colors_.glass ? .82f : 1.f),
-           16);
-    c.border(r, alpha(tint, .22f), 16);
+    auto surface =
+        colors_.contrast ? colors_.background : blend(colors_.surface, tint, colors_.dark ? .12f : .13f);
+    c.rect(r, alpha(surface, colors_.glass ? .96f : 1.f), 16);
+    c.border(r, alpha(tint, colors_.contrast ? 1.f : colors_.dark ? .32f : .28f), 16);
 }
 void Application::button(View &v, int id, const std::wstring &label, D2D1_RECT_F rect, bool accentButton)
 {
@@ -1520,7 +1520,7 @@ void Application::drawDetails()
     float w = r.right / v.scale, h = r.bottom / v.scale;
     auto &c = *v.canvas;
     if (!c.begin(v.hwnd, false, v.scale,
-                 alpha(colors_.background, colors_.glass ? (float)(.32 + .5 * settings_.detailsOpacity) : 1)))
+                 alpha(colors_.background, backdropOpacity(colors_, settings_.detailsOpacity))))
         return;
     v.hits.clear();
     chrome(v, L"CODEX  /  额度监控", w);
@@ -1544,7 +1544,7 @@ void Application::drawDetails()
            box(right - 100, y + 16, 88, 20), 11, colors_.secondary);
     c.text(q ? q->label() : L"剩余 --", box(left + 16, y + 40, width - 32, 45), 32, colors_.primary, true);
     c.progress(box(left + 16, y + 94, width - 32, 10), q ? q->remaining() : std::nullopt, colors_.accent,
-               alpha(colors_.primary, .22f), v.animation);
+               colors_.track, v.animation);
     for (auto &limit : state_.data.windows)
         if (!limit.restriction.empty())
         {
@@ -1565,7 +1565,7 @@ void Application::drawDetails()
         c.text(countdown(quota ? quota->reset : std::nullopt), box(x + 13, top + 39, cw - 26, 44), 16, tint,
                true);
         c.progress(box(x + 13, top + 86, cw - 26, 10), quota ? quota->timePercent() : std::nullopt, tint,
-                   alpha(colors_.primary, .22f), v.animation);
+                   colors_.track, v.animation);
         c.text(readable(quota ? quota->reset : std::nullopt, v.utc), box(x + 13, top + 106, cw - 26, 36), 11,
                colors_.secondary);
         auto dateRect = box(x + 13, top + 106, cw - 26, 36);
@@ -1608,8 +1608,8 @@ void Application::drawDetails()
         card(c, box(left, y, width, 92), colors_.secondary);
         c.text(other.name + L" · " + other.label(), box(left + 14, y + 12, width - 28, 24), 12,
                colors_.primary, true);
-        c.progress(box(left + 14, y + 44, width - 28, 10), other.remaining(), colors_.accent,
-                   alpha(colors_.primary, .22f), v.animation);
+        c.progress(box(left + 14, y + 44, width - 28, 10), other.remaining(), colors_.accent, colors_.track,
+                   v.animation);
         c.text(L"重置 " + countdown(other.reset), box(left + 14, y + 65, width - 28, 20), 11,
                colors_.secondary);
         y += 104;
@@ -1617,7 +1617,7 @@ void Application::drawDetails()
     float creditHeight = 82;
     for (auto &cr : state_.data.credits)
         creditHeight += drawing_.measure(cr.validity(), 11, false, width - 56).height + 36;
-    card(c, box(left, y, width, creditHeight), colors_.secondary);
+    card(c, box(left, y, width, creditHeight), colors_.credit);
     c.text(L"重置卡", box(left + 16, y + 14, width - 130, 24), 14, colors_.primary, true);
     c.text(state_.data.creditCount ? std::to_wstring(*state_.data.creditCount) + L" 张" : L"数量未知",
            box(right - 112, y + 12, 96, 30), 20, colors_.primary, true);
@@ -1635,7 +1635,7 @@ void Application::drawDetails()
         ++creditIndex;
         auto validity = cr.validity();
         float ch = drawing_.measure(validity, 11, false, width - 56).height + 30;
-        c.rect(box(left + 12, cy, width - 24, ch), alpha(colors_.background, .35f), 9);
+        c.rect(box(left + 12, cy, width - 24, ch), alpha(colors_.surface, .68f), 9);
         c.text((cr.title.empty() ? L"重置卡" : cr.title) + L" · " + std::to_wstring(creditIndex),
                box(left + 24, cy + 5, width - 48, 20), 11, colors_.primary, true);
         c.text(validity, box(left + 24, cy + 24, width - 48, ch - 23), 11, colors_.secondary);
@@ -1717,16 +1717,13 @@ void Application::openSettings()
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     editorSync_ = true;
     createControl(PositionControl, L"COMBOBOX", L"", 20, 132, 400, 240, CBS_DROPDOWNLIST | WS_VSCROLL);
-    createControl(ModeControl, L"COMBOBOX", L"", 20, 218, 400, 190, CBS_DROPDOWNLIST | WS_VSCROLL);
-    createControl(ThemeControl, L"COMBOBOX", L"", 20, 258, 400, 240, CBS_DROPDOWNLIST | WS_VSCROLL);
+    createControl(ThemeControl, L"COMBOBOX", L"", 20, 218, 400, 240, CBS_DROPDOWNLIST | WS_VSCROLL);
     const wchar_t *positions[] = {L"自动：可靠空位时贴合任务栏", L"任务栏优先：不遮挡系统控件",
                                   L"固定上移：位于任务栏上缘"};
     for (auto value : positions)
         SendMessageW(controls_[PositionControl], CB_ADDSTRING, 0, (LPARAM)value);
-    for (auto value : {L"跟随系统", L"浅色", L"深色"})
-        SendMessageW(controls_[ModeControl], CB_ADDSTRING, 0, (LPARAM)value);
     for (auto value :
-         {L"雾白 · 银白雾蓝", L"暖砂 · 米砂琥珀", L"石墨 · 中性灰银", L"午夜 · 深蓝月光", L"自定义"})
+         {L"雾白 · 瓷白与雾蓝", L"暖砂 · 象牙与琥珀", L"石墨 · 炭灰与银蓝", L"午夜 · 墨蓝与月紫", L"自定义"})
         SendMessageW(controls_[ThemeControl], CB_ADDSTRING, 0, (LPARAM)value);
     createControl(OpacityControl, L"EDIT", L"", 20, 332, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
     createControl(FontControl, L"EDIT", L"", 235, 332, 185, 30, ES_AUTOHSCROLL | WS_BORDER);
@@ -1816,7 +1813,7 @@ void Application::createControl(int id, const wchar_t *cls, const std::wstring &
             if (m == WM_MOUSEWHEEL)
             {
                 int id = GetDlgCtrlID(child);
-                if ((id == PositionControl || id == ModeControl || id == ThemeControl) &&
+                if ((id == PositionControl || id == ThemeControl) &&
                     SendMessageW(child, CB_GETDROPPEDSTATE, 0, 0))
                     return DefSubclassProc(child, m, w, l);
                 SendMessageW(self->editor_.hwnd, m, w, l);
@@ -1850,8 +1847,7 @@ void Application::layoutControls()
     {
         auto b = controlRects_[id];
         float y = id >= Save && id <= Defaults ? height - 49 : b.top - editor_.scroll;
-        float visibleHeight =
-            (id == PositionControl || id == ModeControl || id == ThemeControl) ? 28 : b.bottom - b.top;
+        float visibleHeight = (id == PositionControl || id == ThemeControl) ? 28 : b.bottom - b.top;
         bool visible = (id >= Save && id <= Defaults) || (y >= 99 && y + visibleHeight <= height - 90);
         ShowWindow(h, visible ? SW_SHOWNA : SW_HIDE);
         SetWindowPos(h, nullptr, (int)(b.left * scale), (int)(y * scale), (int)((b.right - b.left) * scale),
@@ -1866,7 +1862,6 @@ void Application::fillControls()
         return;
     editorSync_ = true;
     SendMessageW(controls_[PositionControl], CB_SETCURSEL, settings_.position, 0);
-    SendMessageW(controls_[ModeControl], CB_SETCURSEL, settings_.mode, 0);
     SendMessageW(controls_[ThemeControl], CB_SETCURSEL, settings_.preset, 0);
     auto number = [&](int id, double v)
     {
@@ -1895,7 +1890,6 @@ void Application::readControls(bool save)
     Settings s = settings_;
     editorError_.clear();
     s.position = (int)SendMessageW(controls_[PositionControl], CB_GETCURSEL, 0, 0);
-    s.mode = (int)SendMessageW(controls_[ModeControl], CB_GETCURSEL, 0, 0);
     s.preset = (int)SendMessageW(controls_[ThemeControl], CB_GETCURSEL, 0, 0);
     auto number = [&](int id, double min, double max, double &out)
     {
@@ -1979,7 +1973,7 @@ void Application::drawSettings()
     float w = r.right / v.scale, h = r.bottom / v.scale;
     auto &c = *v.canvas;
     if (!c.begin(v.hwnd, false, v.scale,
-                 alpha(colors_.background, colors_.glass ? (float)(.32 + .5 * settings_.detailsOpacity) : 1)))
+                 alpha(colors_.background, backdropOpacity(colors_, settings_.detailsOpacity))))
         return;
     v.hits.clear();
     chrome(v, L"CODEX  /  设置", w);
@@ -1992,6 +1986,7 @@ void Application::drawSettings()
     };
     label(L"位置模式", 20, 106);
     label(L"详情与设置主题", 20, 180);
+    label(L"雾白、暖砂为浅色；石墨、午夜为深色。", 20, 260, 400, 11, false);
     label(L"磨砂色调浓度（0.4–1）", 20, 306, 195);
     label(L"数字条字号（13–18）", 235, 306, 185);
     label(L"水平偏移（−4000–0）", 20, 376, 195);
@@ -2376,7 +2371,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.0-native-preview.3"},
+    Json j = {{"version", "2.0.0-native-preview.4"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},

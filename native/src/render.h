@@ -13,10 +13,11 @@ Color alpha(Color color, float value);
 Color blend(Color a, Color b, float amount);
 struct Palette
 {
-    Color background, primary, secondary, accent, weekly;
+    Color background, primary, secondary, accent, weekly, credit, surface, track;
     bool dark = false, contrast = false, glass = true;
 };
 Palette palette(const Settings &settings);
+float backdropOpacity(const Palette &palette, double concentration);
 class Drawing
 {
     ComPtr<ID2D1Factory> factory_;

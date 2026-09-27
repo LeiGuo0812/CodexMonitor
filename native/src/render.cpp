@@ -24,28 +24,26 @@ Color blend(Color a, Color b, float t)
 }
 Palette palette(const Settings &s)
 {
-    bool dark = s.mode == 2 || (s.mode == 0 && systemDark(true));
-    // Neutral mist, warm sand, graphite grey and midnight blue, in both modes.
-    const wchar_t *light[4][5] = {{L"#F6F8FB", L"#233348", L"#54677D", L"#347ACC", L"#6372B4"},
-                                  {L"#FAF2E5", L"#483829", L"#7B6650", L"#A86B2F", L"#768655"},
-                                  {L"#E8EBEF", L"#2A2E35", L"#626A76", L"#566D89", L"#8A6E96"},
-                                  {L"#E8EEF9", L"#202F50", L"#53698B", L"#426ECD", L"#8870B9"}};
-    const wchar_t *deep[4][5] = {{L"#485565", L"#FAFCFF", L"#DAE3ED", L"#A5D3FF", L"#CED4FF"},
-                                 {L"#594D40", L"#FFF8ED", L"#E7D8C3", L"#F2C587", L"#C5D7A6"},
-                                 {L"#41464F", L"#F5F7FA", L"#D0D5DE", L"#ADC2DA", L"#D2BBDD"},
-                                 {L"#2F4063", L"#F1F6FF", L"#C5D4EE", L"#90BCFF", L"#BFB0F0"}};
+    // Background, main text, secondary text, quota, week, credits, raised surface.
+    const wchar_t *presets[4][7] = {
+        {L"#F6F8FC", L"#182538", L"#526176", L"#2864C7", L"#7653AB", L"#287A65", L"#FFFFFF"},
+        {L"#FBF7EF", L"#372D23", L"#70604F", L"#9A611F", L"#4C638C", L"#49785E", L"#FFFEFA"},
+        {L"#202429", L"#F4F6F8", L"#BBC4CF", L"#B1C9E2", L"#CBB9E9", L"#9ED3BE", L"#30363E"},
+        {L"#101827", L"#F2F6FF", L"#B9C9E1", L"#93BEFF", L"#C6B3FF", L"#8FD6BF", L"#1C2A40"}};
     Palette p;
-    p.dark = dark;
+    p.dark = s.preset == 2 || s.preset == 3;
     p.contrast = highContrast();
     p.glass = transparencyEnabled() && !p.contrast;
     if (s.preset < 4)
     {
-        auto &c = dark ? deep[s.preset] : light[s.preset];
+        auto &c = presets[s.preset];
         p.background = color(c[0]);
         p.primary = color(c[1]);
         p.secondary = color(c[2]);
         p.accent = color(c[3]);
         p.weekly = color(c[4]);
+        p.credit = color(c[5]);
+        p.surface = color(c[6]);
     }
     else
     {
@@ -53,9 +51,12 @@ Palette palette(const Settings &s)
         p.primary = color(s.primary);
         p.secondary = color(s.secondary);
         p.accent = color(s.accent);
-        p.weekly = color(L"#8653D9");
         p.dark = p.background.r * .2126f + p.background.g * .7152f + p.background.b * .0722f < .5f;
+        p.weekly = color(p.dark ? L"#C6B3FF" : L"#7653AB");
+        p.credit = color(p.dark ? L"#8FD6BF" : L"#287A65");
+        p.surface = blend(p.background, color(L"#FFFFFF"), p.dark ? .06f : .72f);
     }
+    p.track = p.dark ? blend(p.background, color(L"#000000"), .24f) : blend(p.surface, p.secondary, .24f);
     if (p.contrast)
     {
         auto sys = [](int index)
@@ -65,9 +66,19 @@ Palette palette(const Settings &s)
         };
         p.background = sys(COLOR_WINDOW);
         p.primary = p.secondary = sys(COLOR_WINDOWTEXT);
-        p.accent = p.weekly = sys(COLOR_HIGHLIGHT);
+        p.accent = p.weekly = p.credit = sys(COLOR_HIGHLIGHT);
+        p.surface = p.background;
+        p.track = p.secondary;
     }
     return p;
+}
+float backdropOpacity(const Palette &p, double concentration)
+{
+    if (!p.glass)
+        return 1.f;
+    // Keep bright presets bright over a dark desktop, without fading text.
+    float amount = (float)std::clamp(concentration, .4, 1.);
+    return p.dark ? .55f + .4f * amount : .72f + .26f * amount;
 }
 Drawing::Drawing()
 {

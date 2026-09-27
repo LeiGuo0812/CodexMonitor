@@ -705,7 +705,7 @@ void writeDiagnostic(const std::string &code) noexcept
         auto dir = settingsDirectory();
         fs::create_directories(dir);
         std::ofstream out(dir / L"native-failure.json");
-        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview.3"}}
+        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview.4"}}
                    .dump(2);
     }
     catch (...)

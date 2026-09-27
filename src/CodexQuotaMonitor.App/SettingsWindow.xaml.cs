@@ -53,9 +53,21 @@ public sealed partial class SettingsWindow : Window
         if (_closed) return;
         _original = _original with { StartWithWindows = enabled };
         _draft = _draft with { StartWithWindows = enabled };
+    }
+
+    internal void SyncMenuSetting(Func<MonitorSettings, MonitorSettings> change)
+    {
+        if (_closed) return;
+        _original = change(_original);
+        _draft = change(_draft);
         _loading = true;
-        StartupSwitch.IsOn = enabled;
+        PositionModeBox.SelectedIndex = (int)_draft.PositionMode;
+        ThemePresetBox.SelectedIndex = (int)_draft.ThemePreset;
+        ThemeModeBox.SelectedIndex = (int)_draft.ThemeMode;
+        HorizontalOffsetSlider.Value = _draft.HorizontalOffsetDip;
+        VerticalOffsetSlider.Value = _draft.VerticalOffsetDip;
         _loading = false;
+        UpdatePreview();
     }
 
     private void LoadControls(MonitorSettings settings)
@@ -74,7 +86,6 @@ public sealed partial class SettingsWindow : Window
         SecondaryColorBox.Text = settings.CustomSecondaryText;
         AccentColorBox.Text = settings.CustomAccent;
         CodexPathBox.Text = settings.CodexExecutablePath ?? string.Empty;
-        StartupSwitch.IsOn = settings.StartWithWindows;
         RefreshIntervalBox.Text = (settings.RefreshIntervalSeconds / 60.0).ToString("0.########", System.Globalization.CultureInfo.CurrentCulture);
         _loading = false;
         UpdatePreview();
@@ -92,7 +103,6 @@ public sealed partial class SettingsWindow : Window
         UpdateDraftFromControls();
     }
     private void SettingChanged(object sender, RangeBaseValueChangedEventArgs e) => UpdateDraftFromControls();
-    private void SettingChanged(object sender, RoutedEventArgs e) => UpdateDraftFromControls();
     private void RefreshIntervalChanged(object sender, TextChangedEventArgs e) => UpdateDraftFromControls();
 
     private bool TryReadRefreshInterval(out int seconds)
@@ -130,7 +140,6 @@ public sealed partial class SettingsWindow : Window
             CustomSecondaryText = colors.Secondary,
             CustomAccent = colors.Accent,
             CodexExecutablePath = string.IsNullOrWhiteSpace(CodexPathBox.Text) ? null : CodexPathBox.Text.Trim(),
-            StartWithWindows = StartupSwitch.IsOn,
             RefreshIntervalSeconds = TryReadRefreshInterval(out var refreshSeconds)
                 ? refreshSeconds
                 : _draft.RefreshIntervalSeconds
@@ -303,24 +312,6 @@ public sealed partial class SettingsWindow : Window
         Close();
     }
 
-    private async void ClearCacheButton_Click(object sender, RoutedEventArgs e)
-    {
-        ClearCacheButton.IsEnabled = false;
-        CacheStatus.Text = "正在清理缓存…";
-        try
-        {
-            var success = await _runtime.ClearCachesAsync(notify: false);
-            if (!_closed) CacheStatus.Text = success
-                ? "已清理未使用的缓存和异常日志；当前运行库将在正常退出后清理。程序可继续使用，设置已保留。"
-                : "部分缓存暂未清理或已有清理任务，将在正常退出时重试。";
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-        {
-            if (!_closed) CacheStatus.Text = "部分缓存暂未清理，将在正常退出时重试。也可退出后按 README 中的路径手动清理。";
-        }
-        finally { if (!_closed) ClearCacheButton.IsEnabled = true; }
-    }
-
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
         _saved = true;
@@ -330,9 +321,55 @@ public sealed partial class SettingsWindow : Window
 
     private void DefaultsButton_Click(object sender, RoutedEventArgs e)
     {
-        _draft = new MonitorSettings();
+        _draft = new MonitorSettings { StartWithWindows = _draft.StartWithWindows };
         LoadControls(_draft);
         _runtime.ApplyPreviewSettings(_draft);
+    }
+
+    internal async Task<bool> VerifyMenuSynchronizationAsync(bool save)
+    {
+        var baseline = new SettingsStore().Load();
+        var valid = SettingsPage.FindName("StartupSwitch") is null && SettingsPage.FindName("ClearCacheButton") is null;
+        FontSizeSlider.Value = baseline.FontSize == 18 ? 17 : 18;
+        var editedFont = FontSizeSlider.Value;
+        for (var index = 0; index < 5; index++)
+        {
+            PositionModeBox.SelectedIndex = index % 3;
+            ThemePresetBox.SelectedIndex = index;
+            await Task.Delay(50);
+            var menu = System.Text.Json.JsonSerializer.SerializeToElement(_runtime.ReadMenuVerification());
+            valid &= menu.GetProperty("ThemeItemsPresent").GetBoolean() &&
+                menu.GetProperty("CustomThemeCommandMapped").GetBoolean() &&
+                menu.GetProperty("ThemeCheckedCount").GetInt32() == 1 &&
+                menu.GetProperty("SelectedThemeIndex").GetInt32() == index &&
+                menu.GetProperty("AutomaticChecked").GetBoolean() == (index % 3 == 0) &&
+                menu.GetProperty("TaskbarPreferredChecked").GetBoolean() == (index % 3 == 1) &&
+                menu.GetProperty("FixedAboveChecked").GetBoolean() == (index % 3 == 2);
+            _runtime.SetPositionMode((PositionMode)((index + 1) % 3));
+            _runtime.SetThemePreset((ThemePreset)((index + 1) % 5));
+            valid &= PositionModeBox.SelectedIndex == (index + 1) % 3 &&
+                ThemePresetBox.SelectedIndex == (index + 1) % 5 &&
+                ThemeModeBox.SelectedIndex == (int)_runtime.Settings.ThemeMode &&
+                FontSizeSlider.Value == editedFont && _draft.FontSize == editedFont &&
+                new SettingsStore().Load().FontSize == baseline.FontSize;
+        }
+        var chosenPosition = _runtime.Settings.PositionMode;
+        var chosenTheme = _runtime.Settings.ThemePreset;
+        if (save)
+        {
+            UpdateDraftFromControls();
+            valid &= _runtime.CommitSettings(_draft) is null;
+            _saved = true;
+            Close();
+        }
+        else CancelButton_Click(this, new RoutedEventArgs());
+        await Task.Delay(50); // A queued preview must not undo the save/cancel operation.
+        var persisted = new SettingsStore().Load();
+        return valid && _runtime.Settings.PositionMode == chosenPosition &&
+            _runtime.Settings.ThemePreset == chosenTheme && persisted.PositionMode == chosenPosition &&
+            persisted.ThemePreset == chosenTheme &&
+            _runtime.Settings.FontSize == (save ? editedFont : baseline.FontSize) &&
+            persisted.FontSize == (save ? editedFont : baseline.FontSize);
     }
 
     internal async Task<object> VerifyRefreshEditorAsync()

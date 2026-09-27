@@ -38,6 +38,7 @@ if (!$result.Startup.HostPathRegistered -or !$result.Startup.Disabled -or !$resu
     throw 'Startup registration did not track the single-file host after settings preview.'
 }
 if (!$result.Startup.PositionMenuChecks) { throw 'Position menu must check exactly the selected mode and persist it.' }
+if (!$result.Startup.EditorMenuSync) { throw 'Settings editor and context menu must synchronize in both directions across save/cancel.' }
 if (!$result.Startup.MenuToggleWorks -or !$result.Startup.MenuPreservesDraft -or !$result.Menu.StartupPresent -or
     !$result.Menu.CachePresent -or !$result.Menu.CommandsMapped -or !$result.Menu.CacheBusyDisabled -or !$result.Menu.CacheEnabledAfter) {
     throw 'Context-menu startup/cache entries or their state transitions failed.'

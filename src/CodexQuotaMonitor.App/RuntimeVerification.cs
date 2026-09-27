@@ -13,7 +13,7 @@ internal static class RuntimeVerification
         try
         {
             var original = runtime.Settings;
-            var startup = VerifyStartup(runtime);
+            var startup = await VerifyStartupAsync(runtime);
             runtime.OpenSettings();
             await Task.Delay(200);
             var refreshEditor = await runtime.SettingsForVerification!.VerifyRefreshEditorAsync();
@@ -67,7 +67,7 @@ internal static class RuntimeVerification
             await Task.Delay(350);
             await runtime.RefreshForVerificationAsync();
             await Task.Delay(250);
-            var cleanup = runtime.ClearCachesAsync(notify: false);
+            var cleanup = runtime.ClearCachesAsync(notify: false, throwOnFailure: true);
             var busyMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
             if (!await cleanup) throw new IOException("缓存菜单操作失败。");
             var idleMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
@@ -154,7 +154,7 @@ internal static class RuntimeVerification
         return new { AllCallbacksOpen = opened, RepeatedClicksReuse = reused, ClickRestoresMinimized = restored };
     }
 
-    private static object VerifyStartup(AppRuntime runtime)
+    private static async Task<object> VerifyStartupAsync(AppRuntime runtime)
     {
         const string runPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
         const string name = "CodexQuotaMonitor";
@@ -195,6 +195,12 @@ internal static class RuntimeVerification
             runtime.CommitSettings(disabled);
             // A menu toggle must not persist an unrelated appearance preview.
             runtime.OpenSettings();
+            var menuCancelSynced = await runtime.SettingsForVerification!.VerifyMenuSynchronizationAsync(save: false);
+            runtime.CommitSettings(disabled);
+            runtime.OpenSettings();
+            var menuSaveSynced = await runtime.SettingsForVerification!.VerifyMenuSynchronizationAsync(save: true);
+            runtime.CommitSettings(disabled);
+            runtime.OpenSettings();
             var preview = disabled with { FontSize = disabled.FontSize == 18 ? 17 : 18 };
             runtime.ApplyPreviewSettings(preview);
             var menuEnable = runtime.ToggleStartup(notify: false);
@@ -212,7 +218,7 @@ internal static class RuntimeVerification
                     && !disabledMenu.GetProperty("StartupChecked").GetBoolean() && key.GetValue(name) is null,
                 MenuPreservesDraft = preservedDraft && didNotSavePreview && cancelKeptStartup,
                 RefreshPreviewDidNotReschedule = previewDidNotReschedule, RefreshSaveRescheduled = saveRescheduled,
-                PositionMenuChecks = positionChecks };
+                PositionMenuChecks = positionChecks, EditorMenuSync = menuCancelSynced && menuSaveSynced };
         }
         finally
         {

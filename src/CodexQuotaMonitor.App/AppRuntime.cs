@@ -48,7 +48,7 @@ public sealed class AppRuntime : IDisposable
         _widget = new WidgetWindow(this);
         _widget.ShowWithoutActivation();
         _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache,
-            QueueSystemAppearanceRefresh, () => _settings.PositionMode);
+            QueueSystemAppearanceRefresh, () => _settings.PositionMode, () => _settings.ThemePreset);
         ApplySettingsToWindows();
         _ = Task.Run(RefreshLoopAsync);
     }
@@ -149,7 +149,7 @@ public sealed class AppRuntime : IDisposable
         _settings = _settingsStore.Save(settings);
         _refreshSchedule.SetInterval(_settings.RefreshIntervalSeconds);
         string? warning = null;
-        // Preview already contains the new toggle value. Always sync on save.
+        // Keep the registered executable path current after moving the single-file app.
         try { StartupRegistration.SetEnabled(_settings.StartWithWindows); }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException or InvalidOperationException or System.Security.SecurityException)
         {
@@ -161,16 +161,32 @@ public sealed class AppRuntime : IDisposable
 
     public void UpdateDraggedPosition(int leftPx, int topPx, bool wasInTaskbar)
     {
-        _settings = _widget?.SettingsForDrop(leftPx, topPx) ?? _settings;
-        _settings = _settingsStore.Save(_settings);
-        ApplySettingsToWindows();
+        var dropped = _widget?.SettingsForDrop(leftPx, topPx) ?? _settings;
+        ApplyMenuSetting(settings => settings with
+        {
+            PositionMode = dropped.PositionMode,
+            HorizontalOffsetDip = dropped.HorizontalOffsetDip,
+            VerticalOffsetDip = dropped.VerticalOffsetDip
+        });
     }
 
-    public void SetPositionMode(PositionMode mode) => CommitSettings(_settings with { PositionMode = mode });
-    public void SetThemePreset(ThemePreset preset) => CommitSettings(_settings with
+    private void ApplyMenuSetting(Func<MonitorSettings, MonitorSettings> change)
+    {
+        // Menu actions are immediate; unrelated editor previews remain unsaved.
+        _settingsStore.Save(change(_settingsStore.Load()));
+        _settings = change(_settings);
+        _settingsWindow?.SyncMenuSetting(change);
+        _widget?.ApplySettings(_settings);
+        _dashboard?.ApplySettings(_settings);
+        _tray?.Update(_monitor.Current);
+    }
+
+    public void SetPositionMode(PositionMode mode) => ApplyMenuSetting(settings => settings with { PositionMode = mode });
+    public void SetThemePreset(ThemePreset preset) => ApplyMenuSetting(settings => settings with
     {
         ThemePreset = preset,
-        ThemeMode = preset is ThemePreset.Graphite or ThemePreset.Midnight ? ThemeMode.Dark : ThemeMode.Light
+        ThemeMode = preset == ThemePreset.Custom ? settings.ThemeMode :
+            preset is ThemePreset.Graphite or ThemePreset.Midnight ? ThemeMode.Dark : ThemeMode.Light
     });
 
     public void ShowContextMenu() => _tray?.ShowContextMenu();
@@ -202,7 +218,7 @@ public sealed class AppRuntime : IDisposable
         }
     }
 
-    internal async Task<bool> ClearCachesAsync(bool notify = true)
+    internal async Task<bool> ClearCachesAsync(bool notify = true, bool throwOnFailure = false)
     {
         if (_clearingCache) return false;
         _clearingCache = true;
@@ -214,6 +230,7 @@ public sealed class AppRuntime : IDisposable
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
+            if (throwOnFailure) throw;
             if (notify) _tray?.Notify("缓存暂未完全清理", "程序可继续运行，将在正常退出时重试清理。设置及 Codex 登录信息保留。");
             return false;
         }
@@ -266,6 +283,7 @@ public sealed class AppRuntime : IDisposable
             case TrayAction.WarmSandTheme: SetThemePreset(ThemePreset.WarmSand); break;
             case TrayAction.GraphiteTheme: SetThemePreset(ThemePreset.Graphite); break;
             case TrayAction.MidnightTheme: SetThemePreset(ThemePreset.Midnight); break;
+            case TrayAction.CustomTheme: SetThemePreset(ThemePreset.Custom); break;
             case TrayAction.ToggleStartup: ToggleStartup(); break;
             case TrayAction.ClearCache: _ = ClearCachesAsync(); break;
             case TrayAction.Exit: ExitApplication(); break;

@@ -16,6 +16,7 @@ internal enum TrayAction
     WarmSandTheme,
     GraphiteTheme,
     MidnightTheme,
+    CustomTheme,
     ToggleStartup,
     ClearCache,
     Exit
@@ -51,6 +52,7 @@ internal sealed class SystemTrayIcon : IDisposable
     private readonly Func<bool> _startupEnabled;
     private readonly Func<bool> _cacheBusy;
     private readonly Func<PositionMode> _positionMode;
+    private readonly Func<ThemePreset> _themePreset;
     private readonly Action _appearanceChanged;
     private readonly WndProcDelegate _windowProc;
     private readonly string _className = $"CQM.Tray.{Environment.ProcessId}";
@@ -66,12 +68,13 @@ internal sealed class SystemTrayIcon : IDisposable
     private bool _disposed;
 
     public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy, Action appearanceChanged,
-        Func<PositionMode> positionMode)
+        Func<PositionMode> positionMode, Func<ThemePreset> themePreset)
     {
         _onAction = onAction;
         _startupEnabled = startupEnabled;
         _cacheBusy = cacheBusy;
         _positionMode = positionMode;
+        _themePreset = themePreset;
         _appearanceChanged = appearanceChanged;
         _windowProc = WindowProc;
         _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
@@ -152,10 +155,12 @@ internal sealed class SystemTrayIcon : IDisposable
         AppendMenu(positionMenu, MenuString | (position == PositionMode.Automatic ? MenuChecked : 0), 10, "自动");
         AppendMenu(positionMenu, MenuString | (position == PositionMode.TaskbarPreferred ? MenuChecked : 0), 11, "任务栏优先");
         AppendMenu(positionMenu, MenuString | (position == PositionMode.FixedAbove ? MenuChecked : 0), 12, "固定上移");
-        AppendMenu(themeMenu, MenuString, 20, "雾白");
-        AppendMenu(themeMenu, MenuString, 21, "暖砂");
-        AppendMenu(themeMenu, MenuString, 22, "石墨");
-        AppendMenu(themeMenu, MenuString, 23, "午夜");
+        var theme = _themePreset();
+        AppendMenu(themeMenu, MenuString | (theme == ThemePreset.MistWhite ? MenuChecked : 0), 20, "雾白");
+        AppendMenu(themeMenu, MenuString | (theme == ThemePreset.WarmSand ? MenuChecked : 0), 21, "暖砂");
+        AppendMenu(themeMenu, MenuString | (theme == ThemePreset.Graphite ? MenuChecked : 0), 22, "石墨");
+        AppendMenu(themeMenu, MenuString | (theme == ThemePreset.Midnight ? MenuChecked : 0), 23, "午夜");
+        AppendMenu(themeMenu, MenuString | (theme == ThemePreset.Custom ? MenuChecked : 0), 24, "自定义");
         AppendMenu(menu, MenuPopup, new UIntPtr(unchecked((ulong)positionMenu.ToInt64())), "位置模式");
         AppendMenu(menu, MenuPopup, new UIntPtr(unchecked((ulong)themeMenu.ToInt64())), "主题预设");
         AppendMenu(menu, MenuSeparator, 0, string.Empty);
@@ -178,6 +183,7 @@ internal sealed class SystemTrayIcon : IDisposable
             21 => TrayAction.WarmSandTheme,
             22 => TrayAction.GraphiteTheme,
             23 => TrayAction.MidnightTheme,
+            24 => TrayAction.CustomTheme,
             30 => TrayAction.ToggleStartup,
             31 => TrayAction.ClearCache,
             99 => TrayAction.Exit,
@@ -195,12 +201,18 @@ internal sealed class SystemTrayIcon : IDisposable
             var automatic = GetMenuState(position, 10, 0);
             var preferred = GetMenuState(position, 11, 0);
             var above = GetMenuState(position, 12, 0);
+            var theme = GetSubMenu(menu, 4);
+            var themeChecks = Enumerable.Range(20, 5).Select(id => GetMenuState(theme, (uint)id, 0)).ToArray();
             return new { StartupPresent = startup != uint.MaxValue, CachePresent = cache != uint.MaxValue,
                 StartupChecked = (startup & MenuChecked) != 0, CacheDisabled = (cache & MenuDisabled) != 0,
                 PositionItemsPresent = automatic != uint.MaxValue && preferred != uint.MaxValue && above != uint.MaxValue,
                 AutomaticChecked = (automatic & MenuChecked) != 0,
                 TaskbarPreferredChecked = (preferred & MenuChecked) != 0,
                 FixedAboveChecked = (above & MenuChecked) != 0,
+                ThemeItemsPresent = themeChecks.All(state => state != uint.MaxValue),
+                ThemeCheckedCount = themeChecks.Count(state => (state & MenuChecked) != 0),
+                SelectedThemeIndex = Array.FindIndex(themeChecks, state => (state & MenuChecked) != 0),
+                CustomThemeCommandMapped = ActionForCommand(24) == TrayAction.CustomTheme,
                 PositionCommandsMapped = ActionForCommand(10) == TrayAction.AutomaticPosition &&
                     ActionForCommand(11) == TrayAction.TaskbarPreferredPosition && ActionForCommand(12) == TrayAction.FixedAbovePosition,
                 CommandsMapped = ActionForCommand(30) == TrayAction.ToggleStartup && ActionForCommand(31) == TrayAction.ClearCache };

@@ -77,11 +77,8 @@
             </Grid>
             <TextBlock x:Name="CodexPathStatus" Text="额度查询通过 Codex app-server 复用登录状态" Opacity="0.72" TextWrapping="Wrap" />
 
-            <TextBlock Text="启动与维护" FontWeight="SemiBold" />
-            <ToggleSwitch x:Name="StartupSwitch" Header="开机启动（登录 Windows 后）" Toggled="SettingChanged" />
-            <TextBlock Text="点击保存后生效。移动 EXE 后，请从新位置运行并重新保存设置。" Opacity="0.72" TextWrapping="Wrap" />
-            <Button x:Name="ClearCacheButton" Content="清除缓存" Click="ClearCacheButton_Click" />
-            <TextBlock x:Name="CacheStatus" Text="清理本程序缓存和异常日志，保留设置及 Codex 登录信息。正在使用的运行库会在正常退出后清理，下次启动时重新生成。" Opacity="0.72" TextWrapping="Wrap" />
+            <TextBlock Text="开机启动与清除缓存请使用任务栏文字或托盘图标的右键菜单。" Opacity="0.72" TextWrapping="Wrap" />
+
             <TextBlock Text="位置可在上移模式下用鼠标拖动；保存的是相对任务栏的位置。" Opacity="0.72" TextWrapping="Wrap" />
         </StackPanel>
         </ScrollViewer>

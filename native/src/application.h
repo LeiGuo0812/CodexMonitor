@@ -139,6 +139,7 @@ class Application
     void fillControls();
     void readControls(bool save);
     void layoutControls();
+    void paintSettingsControl(HWND control, HDC dc, RECT bounds);
     void commitSettings(const Settings &s);
     void createControl(int id, const wchar_t *klass, const std::wstring &text, float x, float y, float width,
                        float height, DWORD style);

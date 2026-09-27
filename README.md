@@ -2,7 +2,7 @@
 
 Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已改为 **C++20 + Win32 + DirectWrite / Direct2D**，界面和数据层均为原生实现。
 
-> 当前版本 **v2.0.0**：C++／Win32／DirectWrite／Direct2D 原生单文件版。新增任务视图可见性修复、四套固定明暗主题及稳定的任务栏圆点。
+> 当前版本 **v2.0.1**：C++／Win32／DirectWrite／Direct2D 原生单文件版。设置页面的数值框、下拉列表和操作按钮完整跟随主题，深色主题不再出现白色控件。
 
 ## 运行
 
@@ -14,7 +14,7 @@ Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已�
 
 ## 下载
 
-[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.0/CodexMonitor-v2.0.0-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.0)
+[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.1/CodexMonitor-v2.0.1-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.1)
 
 ## 迁移功能
 

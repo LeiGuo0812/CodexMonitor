@@ -471,7 +471,7 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
         auto init = process.request(
             1, "initialize",
             {{"clientInfo",
-              {{"name", "codex_quota_monitor"}, {"title", "Codex Quota Monitor"}, {"version", "2.0.0"}}}});
+              {{"name", "codex_quota_monitor"}, {"title", "Codex Quota Monitor"}, {"version", "2.0.1"}}}});
         if (init.contains("error"))
             throw std::runtime_error("INITIALIZE_FAILED");
         process.write({{"method", "initialized"}});
@@ -705,7 +705,7 @@ void writeDiagnostic(const std::string &code) noexcept
         auto dir = settingsDirectory();
         fs::create_directories(dir);
         std::ofstream out(dir / L"native-failure.json");
-        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0"}}
+        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.1"}}
                    .dump(2);
     }
     catch (...)

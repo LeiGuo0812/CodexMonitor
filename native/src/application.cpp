@@ -33,6 +33,18 @@ enum ControlId
     PathControl
 };
 static constexpr int SliderOffset = 1000;
+static bool comboControl(int id)
+{
+    return id == PositionControl || id == ThemeControl;
+}
+static bool paintedControl(int id)
+{
+    return comboControl(id) || id == Browse || id == Defaults || id == Cancel || id == Save;
+}
+static COLORREF rgb(Color c)
+{
+    return RGB((BYTE)round(c.r * 255), (BYTE)round(c.g * 255), (BYTE)round(c.b * 255));
+}
 static bool sliderControl(int id)
 {
     return id == OpacityControl || id == FontControl || id == HorizontalControl || id == VerticalControl ||
@@ -859,13 +871,15 @@ void Application::appearance()
     animate_ = animationsEnabled();
     if (editBrush_)
         DeleteObject(editBrush_);
-    auto c = blend(colors_.background, colors_.primary, .05f);
-    editBrush_ = CreateSolidBrush(RGB((BYTE)(c.r * 255), (BYTE)(c.g * 255), (BYTE)(c.b * 255)));
+    editBrush_ = CreateSolidBrush(rgb(colors_.surface));
     for (auto view : {&details_, &editor_})
         if (view->hwnd)
             colors_.glass = applyGlass(view->hwnd, colors_.dark, colors_.glass);
     drawWidget();
     redrawViews();
+    if (editor_.hwnd)
+        RedrawWindow(editor_.hwnd, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
 }
 void Application::createWidget()
 {
@@ -1778,19 +1792,37 @@ void Application::openSettings()
 void Application::createControl(int id, const wchar_t *cls, const std::wstring &label, float x, float y,
                                 float width, float height, DWORD style)
 {
+    if (comboControl(id))
+        style |= CBS_OWNERDRAWFIXED | CBS_HASSTRINGS;
     HWND h = CreateWindowExW(0, cls, label.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | style, 0, 0, 0, 0,
                              editor_.hwnd, (HMENU)(INT_PTR)id, instance_, nullptr);
     if (!h)
         throw std::runtime_error("SETTINGS_CONTROL_FAILED");
     controls_[id] = h;
+    // Do not let the OS visual style paint a light field over a dark palette.
+    SetWindowTheme(h, L"", L"");
     controlRects_[id] = box(x, y, width, height);
     SendMessageW(h, WM_SETFONT, (WPARAM)controlFont_, TRUE);
-    SendMessageW(h, EM_SETLIMITTEXT, id == PathControl ? 32700 : 64, 0);
+    if (wcscmp(cls, L"EDIT") == 0)
+        SendMessageW(h, EM_SETLIMITTEXT, id == PathControl ? 32700 : 64, 0);
+    if (comboControl(id))
+    {
+        SendMessageW(h, CB_SETITEMHEIGHT, (WPARAM)-1, (LPARAM)round(24 * editor_.scale));
+        SendMessageW(h, CB_SETITEMHEIGHT, 0, (LPARAM)round(28 * editor_.scale));
+    }
     SetWindowSubclass(
         h,
         [](HWND child, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref) -> LRESULT
         {
             auto self = (Application *)ref;
+            int id = GetDlgCtrlID(child);
+            if (m == WM_PRINTCLIENT && paintedControl(id))
+            {
+                RECT bounds{};
+                GetClientRect(child, &bounds);
+                self->paintSettingsControl(child, (HDC)w, bounds);
+                return 0;
+            }
             if (m == WM_PAINT)
             {
                 PAINTSTRUCT ps{};
@@ -1801,24 +1833,44 @@ void Application::createControl(int id, const wchar_t *cls, const std::wstring &
                 HPAINTBUFFER buffer = BeginBufferedPaint(dc, &r, BPBF_TOPDOWNDIB, nullptr, &buffered);
                 if (buffer)
                 {
-                    DefSubclassProc(child, WM_PRINTCLIENT, (WPARAM)buffered, PRF_CLIENT | PRF_ERASEBKGND);
+                    if (paintedControl(id))
+                        self->paintSettingsControl(child, buffered, r);
+                    else
+                        DefSubclassProc(child, WM_PRINTCLIENT, (WPARAM)buffered, PRF_CLIENT | PRF_ERASEBKGND);
                     BufferedPaintSetAlpha(buffer, &r, 255);
                     EndBufferedPaint(buffer, TRUE);
                 }
+                else if (paintedControl(id))
+                    self->paintSettingsControl(child, dc, r);
                 else
                     DefSubclassProc(child, WM_PRINTCLIENT, (WPARAM)dc, PRF_CLIENT | PRF_ERASEBKGND);
                 EndPaint(child, &ps);
                 return 0;
             }
+            if (m == WM_MOUSEMOVE && paintedControl(id) && !GetPropW(child, L"CQM.Hover"))
+            {
+                SetPropW(child, L"CQM.Hover", (HANDLE)1);
+                TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, child, 0};
+                TrackMouseEvent(&track);
+                InvalidateRect(child, nullptr, FALSE);
+            }
+            if (m == WM_MOUSELEAVE || m == WM_NCDESTROY)
+            {
+                RemovePropW(child, L"CQM.Hover");
+                if (m == WM_MOUSELEAVE)
+                    InvalidateRect(child, nullptr, FALSE);
+            }
             if (m == WM_MOUSEWHEEL)
             {
-                int id = GetDlgCtrlID(child);
                 if ((id == PositionControl || id == ThemeControl) &&
                     SendMessageW(child, CB_GETDROPPEDSTATE, 0, 0))
                     return DefSubclassProc(child, m, w, l);
                 SendMessageW(self->editor_.hwnd, m, w, l);
                 return 0;
             }
+            if (m == WM_KEYDOWN && (w == VK_ESCAPE || w == VK_RETURN) && comboControl(id) &&
+                SendMessageW(child, CB_GETDROPPEDSTATE, 0, 0))
+                return DefSubclassProc(child, m, w, l);
             if (m == WM_KEYDOWN && w == VK_ESCAPE)
             {
                 self->command(Cancel);
@@ -1826,12 +1878,81 @@ void Application::createControl(int id, const wchar_t *cls, const std::wstring &
             }
             if (m == WM_KEYDOWN && w == VK_RETURN)
             {
-                self->command(Save);
+                self->command(paintedControl(id) && !comboControl(id) ? id : Save);
                 return 0;
             }
-            return DefSubclassProc(child, m, w, l);
+            auto result = DefSubclassProc(child, m, w, l);
+            if (m == WM_SETFOCUS || m == WM_KILLFOCUS || m == WM_ENABLE || m == CB_SETCURSEL ||
+                m == CB_SHOWDROPDOWN || m == BM_SETSTATE || m == WM_LBUTTONDOWN || m == WM_LBUTTONUP ||
+                m == WM_KEYUP || m == WM_SETTEXT)
+                RedrawWindow(child, nullptr, nullptr, RDW_INVALIDATE | RDW_FRAME);
+            return result;
         },
         1, (DWORD_PTR)this);
+}
+void Application::paintSettingsControl(HWND control, HDC dc, RECT r)
+{
+    int saved = SaveDC(dc), id = GetDlgCtrlID(control);
+    bool combo = comboControl(id), enabled = IsWindowEnabled(control) != FALSE;
+    bool focus = GetFocus() == control, hover = GetPropW(control, L"CQM.Hover") != nullptr;
+    bool pressed = !combo && (SendMessageW(control, BM_GETSTATE, 0, 0) & BST_PUSHED);
+    Color tint = id == Save ? colors_.accent : colors_.primary;
+    Color bg = combo ? colors_.surface : blend(colors_.background, tint, id == Save ? .14f : .07f);
+    Color fg = enabled ? (combo ? colors_.primary : tint) : colors_.secondary;
+    if (enabled && (hover || pressed))
+        bg = blend(combo ? colors_.surface : colors_.background, combo ? colors_.accent : tint,
+                   pressed ? .28f : .2f);
+    Color edge = focus ? colors_.accent : blend(bg, colors_.primary, hover ? .36f : .22f);
+    if (colors_.contrast)
+    {
+        bg = colors_.background;
+        edge = colors_.primary;
+    }
+    SetDCBrushColor(dc, rgb(combo ? bg : colors_.background));
+    FillRect(dc, &r, (HBRUSH)GetStockObject(DC_BRUSH));
+    HPEN pen = CreatePen(PS_SOLID, std::max(1, (int)round(editor_.scale)), rgb(edge));
+    SelectObject(dc, pen);
+    if (combo)
+    {
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, r.left, r.top, r.right, r.bottom);
+    }
+    else
+    {
+        SelectObject(dc, GetStockObject(DC_BRUSH));
+        SetDCBrushColor(dc, rgb(bg));
+        if (!focus && !colors_.contrast)
+            SelectObject(dc, GetStockObject(NULL_PEN));
+        int radius = (int)round(14 * editor_.scale);
+        RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    }
+    SelectObject(dc, controlFont_);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, rgb(fg));
+    int padding = (int)round(10 * editor_.scale);
+    RECT text = r;
+    InflateRect(&text, -padding, 0);
+    if (combo)
+        text.right -= (int)round(24 * editor_.scale);
+    auto label = textOf(control);
+    DrawTextW(dc, label.c_str(), (int)label.size(), &text,
+              DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX | (combo ? DT_LEFT : DT_CENTER));
+    if (combo)
+    {
+        int x = r.right - (int)round(15 * editor_.scale), y = (r.top + r.bottom) / 2;
+        int d = std::max(2, (int)round(3 * editor_.scale));
+        MoveToEx(dc, x - d, y - d / 2, nullptr);
+        LineTo(dc, x, y + d / 2);
+        LineTo(dc, x + d, y - d / 2);
+    }
+    if (focus && !(SendMessageW(control, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS))
+    {
+        RECT focusRect = r;
+        InflateRect(&focusRect, -3, -3);
+        DrawFocusRect(dc, &focusRect);
+    }
+    RestoreDC(dc, saved);
+    DeleteObject(pen);
 }
 void Application::layoutControls()
 {
@@ -2036,6 +2157,51 @@ LRESULT Application::viewMessage(View &v, bool editor, HWND h, UINT m, WPARAM w,
 {
     switch (m)
     {
+    case WM_MEASUREITEM:
+        if (editor && l && ((MEASUREITEMSTRUCT *)l)->CtlType == ODT_COMBOBOX)
+        {
+            ((MEASUREITEMSTRUCT *)l)->itemHeight = (UINT)round(28 * scaleFor(h));
+            return TRUE;
+        }
+        break;
+    case WM_DRAWITEM:
+        if (editor && l && ((DRAWITEMSTRUCT *)l)->CtlType == ODT_COMBOBOX)
+        {
+            auto item = (DRAWITEMSTRUCT *)l;
+            int saved = SaveDC(item->hDC);
+            bool selected = (item->itemState & ODS_SELECTED) != 0;
+            auto bg = selected ? blend(colors_.surface, colors_.accent, .22f) : colors_.surface;
+            COLORREF fg = rgb(colors_.primary);
+            if (colors_.contrast && selected)
+            {
+                SetDCBrushColor(item->hDC, GetSysColor(COLOR_HIGHLIGHT));
+                fg = GetSysColor(COLOR_HIGHLIGHTTEXT);
+            }
+            else
+                SetDCBrushColor(item->hDC, rgb(bg));
+            FillRect(item->hDC, &item->rcItem, (HBRUSH)GetStockObject(DC_BRUSH));
+            if (item->itemID != (UINT)-1)
+            {
+                auto length = SendMessageW(item->hwndItem, CB_GETLBTEXTLEN, item->itemID, 0);
+                if (length >= 0 && length < 32768)
+                {
+                    std::wstring label((size_t)length + 1, L'\0');
+                    SendMessageW(item->hwndItem, CB_GETLBTEXT, item->itemID, (LPARAM)label.data());
+                    RECT text = item->rcItem;
+                    InflateRect(&text, -(int)round(10 * v.scale), 0);
+                    SetBkMode(item->hDC, TRANSPARENT);
+                    SetTextColor(item->hDC, fg);
+                    SelectObject(item->hDC, controlFont_);
+                    DrawTextW(item->hDC, label.c_str(), (int)length, &text,
+                              DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
+            }
+            if (item->itemState & ODS_FOCUS)
+                DrawFocusRect(item->hDC, &item->rcItem);
+            RestoreDC(item->hDC, saved);
+            return TRUE;
+        }
+        break;
     case WM_NCCALCSIZE:
         if (w)
             return 0;
@@ -2337,11 +2503,19 @@ LRESULT Application::viewMessage(View &v, bool editor, HWND h, UINT m, WPARAM w,
     case WM_CTLCOLORSTATIC:
     {
         HDC dc = (HDC)w;
-        auto fg = colors_.primary, bg = blend(colors_.background, fg, .05f);
-        SetTextColor(dc, RGB((BYTE)(fg.r * 255), (BYTE)(fg.g * 255), (BYTE)(fg.b * 255)));
-        SetBkColor(dc, RGB((BYTE)(bg.r * 255), (BYTE)(bg.g * 255), (BYTE)(bg.b * 255)));
+        auto fg = colors_.primary, bg = colors_.surface;
+        bool slider = l && sliderControl(GetDlgCtrlID((HWND)l) - SliderOffset);
+        if (slider)
+            bg = colors_.background;
+        SetTextColor(dc, rgb(fg));
+        SetBkColor(dc, rgb(bg));
+        if (slider)
+        {
+            SetDCBrushColor(dc, rgb(bg));
+            return (LRESULT)GetStockObject(DC_BRUSH);
+        }
         if (!editBrush_)
-            editBrush_ = CreateSolidBrush(RGB((BYTE)(bg.r * 255), (BYTE)(bg.g * 255), (BYTE)(bg.b * 255)));
+            editBrush_ = CreateSolidBrush(rgb(bg));
         return (LRESULT)editBrush_;
     }
     case WM_SETTINGCHANGE:
@@ -2371,7 +2545,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.0"},
+    Json j = {{"version", "2.0.1"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},

@@ -35,6 +35,7 @@ if (!$result.ResourceReuse.Rows.UnchangedReuses -or !$result.ResourceReuse.Rows.
 if (!$result.Startup.HostPathRegistered -or !$result.Startup.Disabled -or !$result.Startup.SavedAfterPreview) {
     throw 'Startup registration did not track the single-file host after settings preview.'
 }
+if (!$result.Startup.PositionMenuChecks) { throw 'Position menu must check exactly the selected mode and persist it.' }
 if (!$result.Startup.MenuToggleWorks -or !$result.Startup.MenuPreservesDraft -or !$result.Menu.StartupPresent -or
     !$result.Menu.CachePresent -or !$result.Menu.CommandsMapped -or !$result.Menu.CacheBusyDisabled -or !$result.Menu.CacheEnabledAfter) {
     throw 'Context-menu startup/cache entries or their state transitions failed.'

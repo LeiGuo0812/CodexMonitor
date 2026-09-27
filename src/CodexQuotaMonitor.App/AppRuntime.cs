@@ -47,7 +47,8 @@ public sealed class AppRuntime : IDisposable
     {
         _widget = new WidgetWindow(this);
         _widget.ShowWithoutActivation();
-        _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache, QueueSystemAppearanceRefresh);
+        _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache,
+            QueueSystemAppearanceRefresh, () => _settings.PositionMode);
         ApplySettingsToWindows();
         _ = Task.Run(RefreshLoopAsync);
     }

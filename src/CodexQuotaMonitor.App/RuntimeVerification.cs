@@ -151,6 +151,19 @@ internal static class RuntimeVerification
             runtime.CommitSettings(disabled with { RefreshIntervalSeconds = alternate });
             var saveRescheduled = runtime.ActiveRefreshIntervalSeconds == alternate && new SettingsStore().Load().RefreshIntervalSeconds == alternate;
             runtime.CommitSettings(disabled);
+            var positionChecks = true;
+            foreach (var mode in Enum.GetValues<CodexQuotaMonitor.Core.PositionMode>())
+            {
+                runtime.SetPositionMode(mode);
+                var menu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
+                positionChecks &= menu.GetProperty("PositionItemsPresent").GetBoolean() &&
+                    menu.GetProperty("PositionCommandsMapped").GetBoolean() &&
+                    menu.GetProperty("AutomaticChecked").GetBoolean() == (mode == CodexQuotaMonitor.Core.PositionMode.Automatic) &&
+                    menu.GetProperty("TaskbarPreferredChecked").GetBoolean() == (mode == CodexQuotaMonitor.Core.PositionMode.TaskbarPreferred) &&
+                    menu.GetProperty("FixedAboveChecked").GetBoolean() == (mode == CodexQuotaMonitor.Core.PositionMode.FixedAbove) &&
+                    new SettingsStore().Load().PositionMode == mode;
+            }
+            runtime.CommitSettings(disabled);
             // A menu toggle must not persist an unrelated appearance preview.
             runtime.OpenSettings();
             var preview = disabled with { FontSize = disabled.FontSize == 18 ? 17 : 18 };
@@ -169,7 +182,8 @@ internal static class RuntimeVerification
                 MenuToggleWorks = menuEnable is null && menuDisable is null && enabledMenu.GetProperty("StartupChecked").GetBoolean()
                     && !disabledMenu.GetProperty("StartupChecked").GetBoolean() && key.GetValue(name) is null,
                 MenuPreservesDraft = preservedDraft && didNotSavePreview && cancelKeptStartup,
-                RefreshPreviewDidNotReschedule = previewDidNotReschedule, RefreshSaveRescheduled = saveRescheduled };
+                RefreshPreviewDidNotReschedule = previewDidNotReschedule, RefreshSaveRescheduled = saveRescheduled,
+                PositionMenuChecks = positionChecks };
         }
         finally
         {

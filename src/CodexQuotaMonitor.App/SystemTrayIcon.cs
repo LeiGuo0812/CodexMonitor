@@ -47,6 +47,7 @@ internal sealed class SystemTrayIcon : IDisposable
     private readonly Action<TrayAction> _onAction;
     private readonly Func<bool> _startupEnabled;
     private readonly Func<bool> _cacheBusy;
+    private readonly Func<PositionMode> _positionMode;
     private readonly Action _appearanceChanged;
     private readonly WndProcDelegate _windowProc;
     private readonly string _className = $"CQM.Tray.{Environment.ProcessId}";
@@ -61,11 +62,13 @@ internal sealed class SystemTrayIcon : IDisposable
     private WidgetPresentation? _presentation;
     private bool _disposed;
 
-    public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy, Action appearanceChanged)
+    public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy, Action appearanceChanged,
+        Func<PositionMode> positionMode)
     {
         _onAction = onAction;
         _startupEnabled = startupEnabled;
         _cacheBusy = cacheBusy;
+        _positionMode = positionMode;
         _appearanceChanged = appearanceChanged;
         _windowProc = WindowProc;
         _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
@@ -142,9 +145,10 @@ internal sealed class SystemTrayIcon : IDisposable
         AppendMenu(menu, MenuString, 1, "打开额度详情");
         AppendMenu(menu, MenuString, 2, "立即刷新");
         AppendMenu(menu, MenuString, 3, "外观与位置设置");
-        AppendMenu(positionMenu, MenuString, 10, "自动");
-        AppendMenu(positionMenu, MenuString, 11, "任务栏优先");
-        AppendMenu(positionMenu, MenuString, 12, "固定上移");
+        var position = _positionMode();
+        AppendMenu(positionMenu, MenuString | (position == PositionMode.Automatic ? MenuChecked : 0), 10, "自动");
+        AppendMenu(positionMenu, MenuString | (position == PositionMode.TaskbarPreferred ? MenuChecked : 0), 11, "任务栏优先");
+        AppendMenu(positionMenu, MenuString | (position == PositionMode.FixedAbove ? MenuChecked : 0), 12, "固定上移");
         AppendMenu(themeMenu, MenuString, 20, "雾白");
         AppendMenu(themeMenu, MenuString, 21, "暖砂");
         AppendMenu(themeMenu, MenuString, 22, "石墨");
@@ -184,8 +188,18 @@ internal sealed class SystemTrayIcon : IDisposable
         {
             var startup = GetMenuState(menu, 30, 0);
             var cache = GetMenuState(menu, 31, 0);
+            var position = GetSubMenu(menu, 3);
+            var automatic = GetMenuState(position, 10, 0);
+            var preferred = GetMenuState(position, 11, 0);
+            var above = GetMenuState(position, 12, 0);
             return new { StartupPresent = startup != uint.MaxValue, CachePresent = cache != uint.MaxValue,
                 StartupChecked = (startup & MenuChecked) != 0, CacheDisabled = (cache & MenuDisabled) != 0,
+                PositionItemsPresent = automatic != uint.MaxValue && preferred != uint.MaxValue && above != uint.MaxValue,
+                AutomaticChecked = (automatic & MenuChecked) != 0,
+                TaskbarPreferredChecked = (preferred & MenuChecked) != 0,
+                FixedAboveChecked = (above & MenuChecked) != 0,
+                PositionCommandsMapped = ActionForCommand(10) == TrayAction.AutomaticPosition &&
+                    ActionForCommand(11) == TrayAction.TaskbarPreferredPosition && ActionForCommand(12) == TrayAction.FixedAbovePosition,
                 CommandsMapped = ActionForCommand(30) == TrayAction.ToggleStartup && ActionForCommand(31) == TrayAction.ClearCache };
         }
         finally { DestroyMenu(menu); }
@@ -355,6 +369,9 @@ internal sealed class SystemTrayIcon : IDisposable
 
     [DllImport("user32.dll")]
     private static extern uint GetMenuState(IntPtr menu, uint item, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetSubMenu(IntPtr menu, int position);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out Point point);

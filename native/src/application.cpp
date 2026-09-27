@@ -274,11 +274,13 @@ void CALLBACK Application::shellEvent(HWINEVENTHOOK, DWORD event, HWND h, LONG o
     {
         wchar_t name[128]{};
         GetClassNameW(h, name, (int)std::size(name));
-        if (wcscmp(name, L"ForegroundStaging") == 0 || wcscmp(name, L"XamlExplorerHostIslandWindow") == 0)
+        if (h == active_->taskbarOwner_ || wcscmp(name, L"Progman") == 0 || wcscmp(name, L"WorkerW") == 0 ||
+            wcscmp(name, L"ForegroundStaging") == 0 || wcscmp(name, L"XamlExplorerHostIslandWindow") == 0)
         {
-            // Task View changes the taskbar order between foreground events,
-            // without sending WINDOWPOSCHANGING to our widget. Watch only this
-            // short transition; visible text never triggers a raise.
+            // Task View and Show Desktop change the taskbar order after the
+            // foreground event, without notifying our widget. The taskbar event
+            // also covers Show Desktop restoring an ordinary application. Watch
+            // only this short transition; visible text never triggers a raise.
             active_->beginShellTransition();
         }
     }
@@ -2545,7 +2547,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.1"},
+    Json j = {{"version", "2.0.2"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},

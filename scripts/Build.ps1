@@ -1,10 +1,15 @@
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$Legacy
 )
 
 $ErrorActionPreference = "Stop"
+if (!$Legacy) {
+    & (Join-Path $PSScriptRoot 'Build-Native.ps1') -Configuration $Configuration
+    return
+}
 . (Join-Path $PSScriptRoot "Common.ps1")
 if ($env:OS -ne "Windows_NT") {
     throw "The WinUI 3 app can only be built on Windows. Run this script in Windows PowerShell or PowerShell 7."

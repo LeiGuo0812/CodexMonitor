@@ -1,26 +1,6 @@
-# Third-party notices
+MIT License 
 
-## Native application: JSON for Modern C++ 3.12.0
-
-The native application statically compiles the single header from
-https://github.com/nlohmann/json/releases/tag/v3.12.0 .
-Copyright (c) 2013-2025 Niels Lohmann. MIT License.
-The full license is retained at `native/vendor/LICENSE.nlohmann-json` and embedded
-in the executable as resource 201. The header SHA-256 is
-`aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63`.
-
-The notices below concern the retained C# implementation; the native build does
-not link WinUIEx, .NET, or Windows App SDK.
-
-## WinUIEx
-
-The DWM transparency setup and background-erasing technique in
-`TransparentWindowSurface.cs` are adapted from WinUIEx's `TransparentTintBackdrop`:
-https://github.com/dotMorten/WinUIEx/blob/main/src/WinUIEx/TransparentTintBackdrop.cs
-
-MIT License
-
-Copyright (c) 2021 Morten Nielsen
+Copyright (c) 2013-2025 Niels Lohmann
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

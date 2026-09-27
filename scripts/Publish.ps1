@@ -1,9 +1,14 @@
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\publish\single-file'),
-    [switch]$DirectoryBundle
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\publish\native'),
+    [switch]$DirectoryBundle,
+    [switch]$Legacy
 )
 
 $ErrorActionPreference = 'Stop'
+if (!$Legacy) {
+    & (Join-Path $PSScriptRoot 'Publish-Native.ps1') -OutputDirectory $OutputDirectory
+    return
+}
 . (Join-Path $PSScriptRoot 'Common.ps1')
 if ($env:OS -ne 'Windows_NT') { throw 'Publishing the WinUI app requires Windows.' }
 $output = [IO.Path]::GetFullPath($OutputDirectory)

@@ -1,0 +1,84 @@
+<Window
+    x:Class="CodexQuotaMonitor.App.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Codex 额度监控设置">
+    <Grid x:Name="SettingsRoot" Padding="22" RowDefinitions="Auto,*,Auto" RowSpacing="16">
+        <TextBlock Text="外观与位置" FontSize="23" FontWeight="SemiBold" />
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="SettingsPage" Spacing="12">
+
+            <TextBlock Text="位置模式" FontWeight="SemiBold" />
+            <ComboBox x:Name="PositionModeBox" HorizontalAlignment="Stretch" SelectionChanged="SettingChanged">
+                <ComboBoxItem Content="自动：空位可靠时贴合任务栏" />
+                <ComboBoxItem Content="任务栏优先：优先贴合，不遮挡系统控件" />
+                <ComboBoxItem Content="固定上移：始终显示在任务栏上缘" />
+            </ComboBox>
+
+            <TextBlock Text="详情与设置主题" FontWeight="SemiBold" />
+            <TextBlock Text="数字条正文跟随任务栏；周 / 5h 标签使用主题强调色。贴合时背景透明，仅保留两侧细竖线。" FontSize="12" TextWrapping="Wrap" Opacity="0.72" />
+            <ComboBox x:Name="ThemeModeBox" HorizontalAlignment="Stretch" SelectionChanged="SettingChanged">
+                <ComboBoxItem Content="跟随系统" />
+                <ComboBoxItem Content="浅色" />
+                <ComboBoxItem Content="深色" />
+            </ComboBox>
+            <ComboBox x:Name="ThemePresetBox" HorizontalAlignment="Stretch" SelectionChanged="SettingChanged">
+                <ComboBoxItem Content="雾白 · 冰蓝清透" />
+                <ComboBoxItem Content="暖砂 · 琥珀暖调" />
+                <ComboBoxItem Content="石墨 · 深灰翡翠" />
+                <ComboBoxItem Content="午夜 · 靛蓝紫晶" />
+                <ComboBoxItem Content="自定义" />
+            </ComboBox>
+
+            <Slider x:Name="WidgetOpacitySlider" Visibility="Collapsed" IsEnabled="False" Minimum="0.4" Maximum="1" StepFrequency="0.05" ValueChanged="SettingChanged" />
+            <TextBlock Text="详情磨砂色调浓度" FontWeight="SemiBold" />
+            <Slider x:Name="DetailsOpacitySlider" Minimum="0.4" Maximum="1" StepFrequency="0.05" ValueChanged="SettingChanged" />
+            <TextBlock Text="数字条主字号" FontWeight="SemiBold" />
+            <Slider x:Name="FontSizeSlider" Minimum="13" Maximum="18" StepFrequency="1" ValueChanged="SettingChanged" />
+            <TextBlock Text="水平位置偏移" FontWeight="SemiBold" />
+            <Slider x:Name="HorizontalOffsetSlider" Minimum="-2400" Maximum="0" StepFrequency="20" ValueChanged="SettingChanged" />
+            <TextBlock Text="任务栏上移距离" FontWeight="SemiBold" />
+            <Slider x:Name="VerticalOffsetSlider" Minimum="0" Maximum="160" StepFrequency="4" ValueChanged="SettingChanged" />
+
+            <TextBlock Text="详情自定义颜色（#RRGGBB）" FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="8">
+                <TextBox x:Name="BackgroundColorBox" Header="背景色" TextChanged="ColorTextChanged" />
+                <TextBox x:Name="PrimaryColorBox" Grid.Column="1" Header="主文字色" TextChanged="ColorTextChanged" />
+                <TextBox x:Name="SecondaryColorBox" Grid.Row="1" Header="辅助文字色" TextChanged="ColorTextChanged" />
+                <TextBox x:Name="AccentColorBox" Grid.Row="1" Grid.Column="1" Header="强调色" TextChanged="ColorTextChanged" />
+            </Grid>
+            <TextBlock Text="数字条示例 · 系统任务栏配色" FontSize="12" />
+            <Border x:Name="PreviewSurface" Padding="14" CornerRadius="12" BorderThickness="0">
+                <StackPanel Spacing="4">
+                    <StackPanel Orientation="Horizontal" Spacing="7">
+                        <TextBlock x:Name="PreviewMain" Text="剩余 78%" FontSize="15" FontWeight="SemiBold" />
+                        <TextBlock x:Name="PreviewTag" Text="周" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PreviewState" Text="●" FontSize="8" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock x:Name="PreviewReset" Text="重置 2小时14分" FontSize="11" />
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="ContrastHint" Text="颜色可读性检查" TextWrapping="Wrap" />
+
+            <TextBlock Text="Codex CLI 路径" FontWeight="SemiBold" />
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox x:Name="CodexPathBox" PlaceholderText="自动查找 codex.exe；桌面应用本身不能替代 CLI" TextChanged="CodexPathTextChanged" />
+                <Button Grid.Column="1" Content="浏览…" Click="BrowseCodexButton_Click" />
+            </Grid>
+            <TextBlock x:Name="CodexPathStatus" Text="额度查询通过 Codex app-server 复用登录状态" Opacity="0.72" TextWrapping="Wrap" />
+
+            <TextBlock Text="启动与维护" FontWeight="SemiBold" />
+            <ToggleSwitch x:Name="StartupSwitch" Header="开机启动（登录 Windows 后）" Toggled="SettingChanged" />
+            <TextBlock Text="点击保存后生效。移动 EXE 后，请从新位置运行并重新保存设置。" Opacity="0.72" TextWrapping="Wrap" />
+            <Button x:Name="ClearCacheButton" Content="清除缓存" Click="ClearCacheButton_Click" />
+            <TextBlock x:Name="CacheStatus" Text="清理本程序缓存和异常日志，保留设置及 Codex 登录信息。正在使用的运行库会在正常退出后清理，下次启动时重新生成。" Opacity="0.72" TextWrapping="Wrap" />
+            <TextBlock Text="位置可在上移模式下用鼠标拖动；保存的是相对任务栏的位置。" Opacity="0.72" TextWrapping="Wrap" />
+        </StackPanel>
+        </ScrollViewer>
+            <Grid x:Name="SettingsActions" Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                <Button Content="恢复默认" Click="DefaultsButton_Click" />
+                <Button Grid.Column="1" Content="取消" Click="CancelButton_Click" />
+                <Button Grid.Column="2" Content="保存" Click="SaveButton_Click" />
+            </Grid>
+    </Grid>
+</Window>

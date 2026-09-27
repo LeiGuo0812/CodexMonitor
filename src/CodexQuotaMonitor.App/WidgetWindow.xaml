@@ -1,0 +1,35 @@
+<Window
+    x:Class="CodexQuotaMonitor.App.WidgetWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Codex Quota Monitor">
+    <Grid Background="Transparent">
+    <Border x:Name="Surface" Padding="10,2" CornerRadius="12" BorderThickness="1" IsDoubleTapEnabled="True" IsRightTapEnabled="True">
+        <Grid>
+        <Border x:Name="HoverFill" Margin="-9,-1,-9,-1" CornerRadius="6" Opacity="0" IsHitTestVisible="False" />
+        <Grid x:Name="WidgetContent" RowDefinitions="Auto,Auto" HorizontalAlignment="Left" IsHitTestVisible="False">
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="7" HorizontalAlignment="Left">
+                <TextBlock x:Name="MainLine" Grid.Column="0" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" FontFamily="Segoe UI Variable Text" Text="剩余 --" />
+                <TextBlock x:Name="WindowTag" Grid.Column="1" VerticalAlignment="Center" FontSize="10" FontWeight="SemiBold" Text="" />
+                <TextBlock x:Name="StateMarker" Grid.Column="2" VerticalAlignment="Center" FontSize="8" Text="●" />
+            </Grid>
+            <TextBlock x:Name="ResetLine" Grid.Row="1" FontSize="11" FontFamily="Segoe UI Variable Text" VerticalAlignment="Center" Text="重置时间未知" />
+        </Grid>
+        </Grid>
+    </Border>
+        <Border x:Name="LeftEdge" Width="1" Margin="3,7,0,7" HorizontalAlignment="Left" Background="Transparent" Visibility="Collapsed" IsHitTestVisible="False" />
+        <Border x:Name="RightEdge" Width="1" Margin="0,7,3,7" HorizontalAlignment="Right" Background="Transparent" Visibility="Collapsed" IsHitTestVisible="False" />
+        <Grid x:Name="HoverEdges" Opacity="0" IsHitTestVisible="False">
+            <Grid Width="7" Margin="0,5,0,5" HorizontalAlignment="Left">
+                <Path x:Name="LeftOuterGlow" Width="7" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+                <Path x:Name="LeftInnerGlow" Width="4" HorizontalAlignment="Center" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+                <Path x:Name="LeftHoverEdge" Width="2" HorizontalAlignment="Center" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+            </Grid>
+            <Grid Width="7" Margin="0,5,0,5" HorizontalAlignment="Right">
+                <Path x:Name="RightOuterGlow" Width="7" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+                <Path x:Name="RightInnerGlow" Width="4" HorizontalAlignment="Center" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+                <Path x:Name="RightHoverEdge" Width="2" HorizontalAlignment="Center" Stretch="Fill" Data="M1,0 C1.2,5 2,10 2,16 C2,22 1.2,27 1,32 C0.8,27 0,22 0,16 C0,10 0.8,5 1,0 Z" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,13 @@
+.tools/
+.vs/
+.idea/
+bin/
+obj/
+TestResults/
+publish/
+.artifacts/
+releases/
+docs/*verification*.json
+docs/*reproduction*.json
+*.user
+*.suo

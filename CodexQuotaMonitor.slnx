@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/CodexQuotaMonitor.Core/CodexQuotaMonitor.Core.csproj" />
+  <Project Path="src/CodexQuotaMonitor.App/CodexQuotaMonitor.App.csproj" />
+  <Project Path="tests/CodexQuotaMonitor.Core.Tests/CodexQuotaMonitor.Core.Tests.csproj" />
+</Solution>

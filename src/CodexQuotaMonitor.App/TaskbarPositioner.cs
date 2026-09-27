@@ -250,6 +250,20 @@ internal sealed class TaskbarPositioner
 
     private static NativeWindowInterop.Rect? FindVisibleChild(IntPtr parent, IReadOnlyCollection<string> classNames)
     {
+        // Windows Quick Settings can omit TrayNotifyWnd from EnumChildWindows while
+        // FindWindowEx still resolves the visible child at its unchanged taskbar bounds.
+        // Read the live direct children first; never substitute stale cached geometry.
+        foreach (var name in classNames)
+        {
+            var child = IntPtr.Zero;
+            while ((child = NativeWindowInterop.FindWindowEx(parent, child, name, null)) != IntPtr.Zero)
+            {
+                if (NativeWindowInterop.IsWindowVisible(child) &&
+                    NativeWindowInterop.GetWindowRect(child, out var rect) && rect.Width > 0 && rect.Height > 0)
+                    return rect;
+            }
+        }
+
         NativeWindowInterop.Rect? found = null;
         var className = new System.Text.StringBuilder(256);
         NativeWindowInterop.EnumChildCallback callback = (hwnd, _) =>

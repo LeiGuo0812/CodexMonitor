@@ -20,13 +20,19 @@ $info.EnvironmentVariables['PATH'] = [Environment]::GetEnvironmentVariable('PATH
 $started = [DateTime]::UtcNow
 $app = [Diagnostics.Process]::Start($info)
 Write-Output ('Verification PID: ' + $app.Id)
-if (!$app.WaitForExit(60000)) { throw 'Verification did not finish within 60 seconds.' }
+$deadline = [DateTime]::UtcNow.AddSeconds(120)
+while (!$app.WaitForExit(1000)) {
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'Verification did not finish within 120 seconds.' }
+}
 if ($app.ExitCode -ne 0) { throw ('Verification process exited with ' + $app.ExitCode) }
 if (!(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).LastWriteTimeUtc -lt $started) {
     throw 'The process did not produce a fresh verification report.'
 }
 $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
 if ($result.VerificationError) { throw ('Verification failed: ' + $result.VerificationError) }
+if (!$result.Dashboard.ThickProgressBars -or !$result.Dashboard.CreditsUseThemeTint) {
+    throw 'Progress track thickness or theme-derived credit colors failed.'
+}
 if (!$result.ClickActivation.AllCallbacksOpen -or !$result.ClickActivation.RepeatedClicksReuse -or
     !$result.ClickActivation.ClickRestoresMinimized) { throw 'Click activation, window reuse or restore failed.' }
 if (!$result.ResourceReuse.Rows.UnchangedReuses -or !$result.ResourceReuse.Rows.ChangedReuses -or

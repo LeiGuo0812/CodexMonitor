@@ -121,7 +121,13 @@ public sealed partial class DashboardWindow : Window
         MainQuotaCard.Background = WindowAppearance.PanelSurface(colors, colors.Accent);
         ResetTimingCard.Background = WindowAppearance.PanelSurface(colors, "#39A992");
         WeekTimingCard.Background = WindowAppearance.PanelSurface(colors, colors.WeeklyAccent);
-        CreditsCard.Background = WindowAppearance.PanelSurface(colors, "#CB9A4F");
+        // A muted tint from the active palette keeps the credit panel distinct
+        // without introducing a fixed amber cast into cool or custom themes.
+        CreditsCard.Background = WindowAppearance.PanelSurface(colors, colors.SecondaryText);
+        CreditsCard.BorderBrush = WindowAppearance.Translucent(colors.SecondaryText, 0.20);
+        CreditsCountText.Foreground = primary;
+        CreditsStatusText.Foreground = secondary;
+        CreditsStatusText.Opacity = 1;
         // Set inherited text color on the root as well as on primary and auxiliary labels.
         WindowRoot.SetValue(TextBlock.ForegroundProperty, primary);
         RemainingText.Foreground = primary;
@@ -466,6 +472,12 @@ public sealed partial class DashboardWindow : Window
         MainTimeBarVisible = MainResetProgress.Visibility == Visibility.Visible,
         WeeklyTimeBarVisible = WeeklyResetProgress.Visibility == Visibility.Visible,
         TimeBarColorsDiffer = ((SolidColorBrush)MainResetProgress.Foreground).Color != ((SolidColorBrush)WeeklyResetProgress.Foreground).Color,
+        ThickProgressBars = new[] { QuotaProgress, MainResetProgress, WeeklyResetProgress }
+            .Where(bar => bar.Visibility == Visibility.Visible).All(bar =>
+                bar.ActualHeight >= 10 && TemplatePartHeight(bar, "ProgressBarTrack") >= 9.5 &&
+                TemplatePartHeight(bar, "DeterminateProgressBarIndicator") >= 9.5),
+        CreditsUseThemeTint = ((LinearGradientBrush)CreditsCard.Background).GradientStops[0].Color ==
+            WindowAppearance.Translucent(WindowAppearance.Colors(_settings).SecondaryText, 0.22).Color,
         ReadableDate = new[] { ResetLocalText.Text, WeeklyResetDateText.Text }.Any(text => text.Contains('月') || text.Contains('天')),
         GlassBackdrop = SystemBackdrop is GlassBackdrop,
         Bounds = WindowPlacement.ReadVerification(this),
@@ -477,6 +489,14 @@ public sealed partial class DashboardWindow : Window
         InitialAnimationsStarted = _animated.Count,
         InitialLoadingObserved = _observedLoading
     };
+
+    private static double? TemplatePartHeight(DependencyObject root, string name)
+    {
+        if (root is FrameworkElement element && element.Name == name) return element.ActualHeight;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            if (TemplatePartHeight(VisualTreeHelper.GetChild(root, i), name) is { } height) return height;
+        return null;
+    }
 
     internal bool ClockSuspended => _suspended && !_clock.IsEnabled;
     internal bool ClockRunning => !_suspended && _clock.IsEnabled;

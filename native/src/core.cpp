@@ -389,6 +389,14 @@ std::optional<Quota> State::find(Kind k) const
             return q;
     return {};
 }
+bool isShellExecutableName(const std::wstring &name)
+{
+    for (auto shell : {L"ShellExperienceHost.exe", L"ShellHost.exe", L"StartMenuExperienceHost.exe",
+                       L"SearchHost.exe", L"SearchApp.exe", L"TextInputHost.exe", L"explorer.exe"})
+        if (_wcsicmp(name.c_str(), shell) == 0)
+            return true;
+    return false;
+}
 bool shouldSnapToTaskbar(RECT widget, RECT bar, float scale)
 {
     int width = std::min(widget.right, bar.right) - std::max(widget.left, bar.left);

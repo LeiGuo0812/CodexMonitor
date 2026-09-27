@@ -34,6 +34,12 @@ int main()
     {
         const auto five = window(Kind::FiveHour, 100), week = window(Kind::Week, 20);
         RECT bar{0, 1000, 1920, 1048};
+        for (auto name :
+             {L"Explorer.EXE", L"EXPLORER.exe", L"ShellExperienceHost.exe", L"startmenuexperiencehost.EXE",
+              L"SearchHost.exe", L"SearchApp.exe", L"TextInputHost.exe"})
+            require(isShellExecutableName(name), "Shell executable names are case insensitive");
+        for (auto name : {L"chrome.exe", L"explorer.exe.bak", L"myexplorer.exe"})
+            require(!isShellExecutableName(name), "Ordinary apps are not shell hosts");
         for (int left : {0, 700, 1650})
             require(shouldSnapToTaskbar({left, 968, left + 200, 1008}, bar, 1),
                     "Eight DIP depth snaps at left, centre and right");

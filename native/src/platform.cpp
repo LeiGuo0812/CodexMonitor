@@ -614,9 +614,7 @@ bool fullscreenForeground(HWND own)
             std::wstring systemRoot = std::wstring(windows) + L"\\";
             bool system = full.size() > systemRoot.size() &&
                           _wcsnicmp(full.c_str(), systemRoot.c_str(), systemRoot.size()) == 0;
-            if (system && (name == L"ShellExperienceHost.exe" || name == L"ShellHost.exe" ||
-                           name == L"StartMenuExperienceHost.exe" || name == L"SearchHost.exe" ||
-                           name == L"explorer.exe"))
+            if (system && isShellExecutableName(name))
                 return false;
         }
     }
@@ -707,7 +705,7 @@ void writeDiagnostic(const std::string &code) noexcept
         auto dir = settingsDirectory();
         fs::create_directories(dir);
         std::ofstream out(dir / L"native-failure.json");
-        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview.2"}}
+        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.0-native-preview.3"}}
                    .dump(2);
     }
     catch (...)

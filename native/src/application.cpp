@@ -15,7 +15,7 @@ namespace cqm
 static constexpr UINT TrayMessage = WM_APP + 1, QueryMessage = WM_APP + 2, ShellMessage = WM_APP + 3,
                       CleanupMessage = WM_APP + 4, ValidationMessage = WM_APP + 5,
                       NetworkMessage = WM_APP + 6;
-static constexpr UINT TickTimer = 1, HoverTimer = 2, AnimationTimer = 3;
+static constexpr UINT TickTimer = 1, HoverTimer = 2, AnimationTimer = 3, ShellTransitionTimer = 4;
 enum ControlId
 {
     PositionControl = 200,
@@ -215,8 +215,26 @@ int Application::run()
         openDetails();
     }
     MSG message{};
-    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    for (;;)
     {
+        if (shellTransitionTimer_ && shellTransitionUntil_)
+        {
+            HANDLE timer = shellTransitionTimer_.get();
+            DWORD result = MsgWaitForMultipleObjectsEx(1, &timer, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            if (result == WAIT_OBJECT_0)
+                checkShellTransition();
+            else if (result == WAIT_FAILED)
+            {
+                CancelWaitableTimer(timer);
+                shellTransitionUntil_ = 0;
+            }
+            if (!PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                continue;
+            if (message.message == WM_QUIT)
+                break;
+        }
+        else if (GetMessageW(&message, nullptr, 0, 0) <= 0)
+            break;
         if (editor_.hwnd && (message.hwnd == editor_.hwnd || IsChild(editor_.hwnd, message.hwnd)) &&
             IsDialogMessageW(editor_.hwnd, &message))
             continue;
@@ -225,10 +243,41 @@ int Application::run()
     }
     return (int)message.wParam;
 }
-void CALLBACK Application::shellEvent(HWINEVENTHOOK, DWORD, HWND h, LONG object, LONG, DWORD, DWORD)
+void CALLBACK Application::shellEvent(HWINEVENTHOOK, DWORD event, HWND h, LONG object, LONG, DWORD, DWORD)
 {
-    if (active_ && h && object == OBJID_WINDOW && active_->controller_)
-        PostMessageW(active_->controller_, ShellMessage, 0, 0);
+    if (!active_ || active_->closing_ || !h || !active_->controller_)
+        return;
+    // OUTOFCONTEXT callbacks run on our registering UI thread. Restore ordering
+    // here rather than waiting for another posted message/compositor frame.
+    DWORD eventProcess = 0, shellProcess = 0;
+    GetWindowThreadProcessId(h, &eventProcess);
+    if (active_->taskbarOwner_)
+        GetWindowThreadProcessId(active_->taskbarOwner_, &shellProcess);
+    bool taskbarProcess = shellProcess && eventProcess == shellProcess;
+    // Shell containers also report child-order changes as OBJID_CLIENT.
+    if (object != OBJID_WINDOW &&
+        !(taskbarProcess && event == EVENT_OBJECT_REORDER && object == OBJID_CLIENT))
+        return;
+    if (event == EVENT_SYSTEM_FOREGROUND && taskbarProcess && active_->docked_ && !active_->drag_)
+    {
+        wchar_t name[128]{};
+        GetClassNameW(h, name, (int)std::size(name));
+        if (wcscmp(name, L"ForegroundStaging") == 0 || wcscmp(name, L"XamlExplorerHostIslandWindow") == 0)
+        {
+            // Task View changes the taskbar order between foreground events,
+            // without sending WINDOWPOSCHANGING to our widget. Watch only this
+            // short transition; visible text never triggers a raise.
+            active_->beginShellTransition();
+        }
+    }
+    if (event == EVENT_SYSTEM_FOREGROUND || taskbarProcess)
+        active_->restoreTaskbarVisibility();
+    if (!active_->shellEventPending_)
+    {
+        active_->shellEventPending_ = true;
+        if (!PostMessageW(active_->controller_, ShellMessage, 0, 0))
+            active_->shellEventPending_ = false;
+    }
 }
 LRESULT CALLBACK Application::widgetProc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
@@ -312,6 +361,8 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_TIMER:
         if (w == TickTimer)
             tick();
+        else if (w == ShellTransitionTimer)
+            checkShellTransition();
         else if (w == HoverTimer)
         {
             float target = hover_ ? 1.f : 0.f;
@@ -357,6 +408,7 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         }
         return 0;
     case ShellMessage:
+        shellEventPending_ = false;
         if (!drag_)
             place();
         return 0;
@@ -852,10 +904,70 @@ void Application::attachTaskbar(HWND owner)
     // Windows may temporarily report no owner while moving an ownership group
     // between shell layers. Do not repeatedly reattach during that transition.
 }
+void Application::restoreTaskbarVisibility()
+{
+    if (repairingOcclusion_ || !docked_ || !taskbarOwner_ || !IsWindow(taskbarOwner_) || hidden_ || drag_ ||
+        !IsWindowVisible(widget_))
+        return;
+    DWORD cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(widget_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
+        return;
+    RECT r{};
+    if (!GetWindowRect(widget_, &r))
+        return;
+    HWND hit = WindowFromPoint({(r.left + r.right) / 2, (r.top + r.bottom) / 2});
+    // Task View can reorder the promoted group without hiding or moving us.
+    // Recover only a confirmed taskbar occlusion, never over another application's
+    // window, a flyout overlapping this area, or an inactive virtual desktop.
+    if (hit != taskbarOwner_ && (!hit || GetAncestor(hit, GA_ROOT) != taskbarOwner_))
+        return;
+    auto current = GetTickCount64();
+    if (current < occlusionRetryAfter_)
+        return;
+    repairingOcclusion_ = true;
+    if (!SetWindowPos(widget_, HWND_TOPMOST, 0, 0, 0, 0,
+                      SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER))
+        occlusionRetryAfter_ = current + 500;
+    repairingOcclusion_ = false;
+}
+void Application::beginShellTransition()
+{
+    shellTransitionUntil_ = GetTickCount64() + 350;
+    if (!shellTransitionTimer_)
+        shellTransitionTimer_.reset(CreateWaitableTimerExW(
+            nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE));
+    LARGE_INTEGER due{};
+    due.QuadPart = -20000; // Two milliseconds; active only during the shell transition.
+    if (shellTransitionTimer_ &&
+        SetWaitableTimer(shellTransitionTimer_.get(), &due, 2, nullptr, nullptr, FALSE))
+        KillTimer(controller_, ShellTransitionTimer);
+    else if (!SetTimer(controller_, ShellTransitionTimer, USER_TIMER_MINIMUM, nullptr))
+        shellTransitionUntil_ = 0;
+}
+void Application::checkShellTransition()
+{
+    restoreTaskbarVisibility();
+    if (GetTickCount64() < shellTransitionUntil_ && docked_ && !drag_ && !hidden_ && !closing_)
+        return;
+    if (shellTransitionTimer_)
+        CancelWaitableTimer(shellTransitionTimer_.get());
+    KillTimer(controller_, ShellTransitionTimer);
+    shellTransitionUntil_ = 0;
+    if (!shellEventPending_ && !closing_)
+        shellEventPending_ = PostMessageW(controller_, ShellMessage, 0, 0) != FALSE;
+}
 void Application::place(bool immediate)
 {
     if (!widget_ || drag_)
         return;
+    // Appbar layout queries synchronously call Explorer. During its animation
+    // those calls can delay visibility recovery by several compositor frames.
+    if (!immediate && shellTransitionUntil_ && GetTickCount64() < shellTransitionUntil_ && docked_ &&
+        !hidden_)
+    {
+        restoreTaskbarVisibility();
+        return;
+    }
     float scale = scaleFor(widget_);
     float font = (float)settings_.font;
     std::wstring main = state_.selected ? state_.selected->label() : L"剩余 --",
@@ -898,9 +1010,11 @@ void Application::place(bool immediate)
     bool styleChanged = docked_ != p.docked;
     docked_ = p.docked;
     attachTaskbar(docked_ ? FindWindowW(L"Shell_TrayWnd", nullptr) : nullptr);
+    restoreTaskbarVisibility();
     // During a shell-layer transition Windows temporarily detaches the owner
     // group. Its compositor controls visibility until the transition finishes.
-    // Keep the existing geometry and do not fight that animation with show/raise calls.
+    // Keep existing geometry/visibility during the animation. The targeted check
+    // above may repair ordering only when the taskbar actually covers our text.
     if (docked_ && taskbarOwner_ && IsWindow(taskbarOwner_) && !GetWindow(widget_, GW_OWNER) && !hidden_ &&
         !immediate)
         return;
@@ -2262,7 +2376,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.0-native-preview.2"},
+    Json j = {{"version", "2.0.0-native-preview.3"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},

@@ -1,5 +1,24 @@
-# 音量面板遮挡调查（2026-09-27）
+# 任务栏系统面板遮挡调查（2026-09-27）
 
+## 原生预览版 3：任务视图与同类面板
+
+任务视图复现时，数字条 HWND 未改变、`IsWindowVisible=true`、`DWMWA_CLOAKED=0`，坐标保持 `(2954,2081)-(3166,2155)`。数字条和任务栏均处于 band 6，但中心命中变为 `Shell_TrayWnd`，前景窗口为 Explorer 的 `XamlExplorerHostIslandWindow`。这属于同层重排遮挡，与窗口被销毁或跨虚拟桌面隐藏不同。退出任务视图后的普通层同样可能保留错误顺序；一次针对性的 `SetWindowPos(HWND_TOPMOST)` 后命中立即恢复数字条。
+
+新逻辑在系统窗口事件和低频驻留检查中判断实际命中：只有数字条已经吸附、未主动隐藏、未被 DWM cloak，且遮挡者为任务栏本身或其子窗口时，才恢复数字条的层级。操作保留位置、尺寸、焦点和任务栏自身顺序。可见性恢复直接在相关 WinEvent 回调执行，包含 Shell 容器的 OBJID_CLIENT 重排；布局消息合并，仅失败重试有 500 毫秒退避；正常可见时不重复置顶，其他应用或直接覆盖该位置的弹出面板不会触发抢占。
+
+系统进程名改为大小写无关识别，本机实际 `Explorer.EXE` 不再漏认，同时覆盖开始菜单、搜索、Shell 和系统输入宿主。原有“系统暂时拆分 owner 期间延后解除”的拖动修复继续保留。系统窗口层级与隐藏的定义参见 [Window Features](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features) 和 [DWMWA_CLOAKED](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)。
+
+自动检查仍不能代替各面板的实际交互复测；虚拟桌面切换与其他 Windows 构建版本属于单独的验证范围。
+### 切换瞬间的闪动
+
+最初的恢复逻辑消除了持续遮挡；用户确认开始、搜索、通知／日历和音量正常，但任务视图切换仍短暂闪动。去掉消息排队和成功恢复间隔后仍复现。诊断显示，任务栏盖住文字前没有向本程序发送可用于拦截的 `WM_WINDOWPOSCHANGING`；遮挡出现在 `ForegroundStaging` 与后续任务视图前景事件之间。普通短时 Win32 定时器也仍记录到约 15～30 毫秒的遮挡，用户确认未解决闪动。
+
+当前实现只在任务栏所属进程的 `ForegroundStaging` / `XamlExplorerHostIslandWindow` 成为前景时，启动 350 毫秒的过渡监测。使用按需创建的高精度等待定时器，请求间隔为 2 毫秒，并在同一 UI 线程中与消息一起等待；系统调度不保证严格的 2 毫秒延迟。过渡期间延后需要同步调用 Explorer 的布局查询。结束、拖出或主动隐藏后取消定时器，不增加工作线程，也不修改系统全局计时精度。若等待定时器不可用则退回短时 Win32 定时器。正常可见时只读取状态，不执行置顶。
+
+相关 API 参见 [CreateWaitableTimerExW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createwaitabletimerexw) 和 [MsgWaitForMultipleObjectsEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-msgwaitformultipleobjectsex)。最终视觉结果以本机交互复测为准，不能从编译结果推断零闪动。
+最终人工复测：用户连续开关任务视图并检查音量后，确认“任务视图不再闪动，音量正常”。只读采样显示打开任务视图期间数字条保持原位置可见；关闭过渡中仍有一次约 15 毫秒的任务栏命中记录，用户未观察到闪动，因此不将此结论扩大为每个合成帧、所有 Windows 版本均绝无遮挡。平时恢复普通消息等待，短时监测结束后不再进行高频轮询。
+
+本轮自动检查：构建成功，74 项核心检查通过。最终原生运行检查中两次真实查询均成功，刷新状态已结束，菜单／设置同步、详情对齐、绘制资源释放与数字条重建均通过，用户配置哈希保持不变。较早的一轮检查曾有第二次请求超时，程序正常结束刷新并保留已有数据；最终重跑已恢复成功。自动检查未模拟系统面板，视觉结论来自上面的用户交互反馈。
 ## 原生预览版 2：窗口所有权方案
 
 先前尝试的是子窗口挂接（`SetParent` / `WS_CHILD`），此次保留 `WS_POPUP`，只使用 `SetWindowLongPtrW(GWLP_HWNDPARENT)` 设置任务栏为 owner。官方描述了 [Owned Windows 的层级关系](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows)；特定 Windows 版本中系统 band 联动行为仍以实机观察为准，不假定跨版本保证。

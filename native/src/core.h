@@ -88,6 +88,7 @@ struct Settings
 };
 bool validColor(const std::wstring &value);
 bool shouldSnapToTaskbar(RECT widget, RECT taskbar, float scale);
+bool isShellExecutableName(const std::wstring &name);
 Query parseReplies(const Json &account, const Json &limits);
 std::string fingerprint(std::string value);
 std::wstring errorLabel(const std::string &error);

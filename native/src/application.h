@@ -59,6 +59,11 @@ class Application
     State state_;
     HWND widget_ = nullptr, tooltip_ = nullptr;
     HWND controller_ = nullptr, taskbarOwner_ = nullptr;
+    bool shellEventPending_ = false;
+    bool repairingOcclusion_ = false;
+    ULONGLONG occlusionRetryAfter_ = 0;
+    ULONGLONG shellTransitionUntil_ = 0;
+    Handle shellTransitionTimer_;
     bool snapReady_ = false;
     Canvas widgetCanvas_;
     View details_, editor_;
@@ -110,6 +115,9 @@ class Application
     void place(bool immediate = false);
     void createWidget();
     void attachTaskbar(HWND owner);
+    void restoreTaskbarVisibility();
+    void beginShellTransition();
+    void checkShellTransition();
     void drawWidget();
     void updateTooltip();
     void addTray();

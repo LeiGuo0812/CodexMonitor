@@ -21,6 +21,7 @@ public sealed class AppRuntime : IDisposable
     private SystemTrayIcon? _tray;
     private MonitorSettings _settings;
     private bool _disposed;
+    private bool _clearingCache;
 
     public AppRuntime()
     {
@@ -42,7 +43,7 @@ public sealed class AppRuntime : IDisposable
     {
         _widget = new WidgetWindow(this);
         _widget.ShowWithoutActivation();
-        _tray = new SystemTrayIcon(HandleTrayAction);
+        _tray = new SystemTrayIcon(HandleTrayAction, StartupRegistration.IsEnabled, () => _clearingCache);
         ApplySettingsToWindows();
         _ = Task.Run(RefreshLoopAsync);
     }
@@ -87,6 +88,7 @@ public sealed class AppRuntime : IDisposable
     internal object? ReadWidgetVerification() => _widget?.ReadVerification();
     internal Task<object> VerifyHoverAsync() => _widget!.VerifyHoverAsync();
     internal object? ReadTrayVerification() => _tray?.ReadVerification();
+    internal object? ReadMenuVerification() => _tray?.ReadMenuVerification();
     internal DashboardWindow? DashboardForVerification => _dashboard;
     internal SettingsWindow? SettingsForVerification => _settingsWindow;
     internal IntPtr WidgetHandle => _widget?.Handle ?? IntPtr.Zero;
@@ -146,6 +148,51 @@ public sealed class AppRuntime : IDisposable
 
     public void ShowContextMenu() => _tray?.ShowContextMenu();
 
+    internal string? ToggleStartup(bool notify = true)
+    {
+        var enabled = !StartupRegistration.IsEnabled();
+        var persisted = _settingsStore.Load();
+        try
+        {
+            StartupRegistration.SetEnabled(enabled);
+            try { _settingsStore.Save(persisted with { StartWithWindows = enabled }); }
+            catch
+            {
+                StartupRegistration.SetEnabled(!enabled);
+                throw;
+            }
+            // Preserve unsaved appearance edits, and keep Cancel from undoing this menu action.
+            _settings = _settings with { StartWithWindows = enabled };
+            _settingsWindow?.SyncStartupSetting(enabled);
+            if (notify) _tray?.Notify("开机启动", enabled ? "已开启，登录 Windows 后自动运行。" : "已关闭开机启动。");
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Security.SecurityException)
+        {
+            const string error = "开机启动未能更新，请检查当前用户的设置文件和启动项权限。";
+            if (notify) _tray?.Notify("开机启动", error);
+            return error;
+        }
+    }
+
+    internal async Task<bool> ClearCachesAsync(bool notify = true)
+    {
+        if (_clearingCache) return false;
+        _clearingCache = true;
+        try
+        {
+            await Task.Run(CacheMaintenance.ClearAsync);
+            if (notify) _tray?.Notify("缓存清理完成", "已清理未使用的缓存；当前运行库将在正常退出后清理。设置及 Codex 登录信息保留。");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            if (notify) _tray?.Notify("缓存暂未完全清理", "程序可继续运行，将在正常退出时重试清理。设置及 Codex 登录信息保留。");
+            return false;
+        }
+        finally { _clearingCache = false; }
+    }
+
     public void ExitApplication() => Application.Current.Exit();
 
     public void ApplySettingsToWindows()
@@ -195,6 +242,8 @@ public sealed class AppRuntime : IDisposable
             case TrayAction.WarmSandTheme: SetThemePreset(ThemePreset.WarmSand); break;
             case TrayAction.GraphiteTheme: SetThemePreset(ThemePreset.Graphite); break;
             case TrayAction.MidnightTheme: SetThemePreset(ThemePreset.Midnight); break;
+            case TrayAction.ToggleStartup: ToggleStartup(); break;
+            case TrayAction.ClearCache: _ = ClearCachesAsync(); break;
             case TrayAction.Exit: ExitApplication(); break;
         }
     }

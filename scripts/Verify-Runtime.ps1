@@ -30,6 +30,10 @@ if ($result.VerificationError) { throw ('Verification failed: ' + $result.Verifi
 if (!$result.Startup.HostPathRegistered -or !$result.Startup.Disabled -or !$result.Startup.SavedAfterPreview) {
     throw 'Startup registration did not track the single-file host after settings preview.'
 }
+if (!$result.Startup.MenuToggleWorks -or !$result.Startup.MenuPreservesDraft -or !$result.Menu.StartupPresent -or
+    !$result.Menu.CachePresent -or !$result.Menu.CommandsMapped -or !$result.Menu.CacheBusyDisabled -or !$result.Menu.CacheEnabledAfter) {
+    throw 'Context-menu startup/cache entries or their state transitions failed.'
+}
 if (!$result.Cache.ActivePreserved -or !$result.Cache.CleanupRequested) { throw 'Live cache cleanup failed.' }
 if ($result.Cache.Bundled) {
     $deadline = [DateTime]::UtcNow.AddSeconds(25)

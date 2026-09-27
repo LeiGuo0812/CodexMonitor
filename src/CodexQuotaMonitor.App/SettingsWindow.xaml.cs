@@ -45,6 +45,16 @@ public sealed partial class SettingsWindow : Window
         LoadControls(settings);
     }
 
+    internal void SyncStartupSetting(bool enabled)
+    {
+        if (_closed) return;
+        _original = _original with { StartWithWindows = enabled };
+        _draft = _draft with { StartWithWindows = enabled };
+        _loading = true;
+        StartupSwitch.IsOn = enabled;
+        _loading = false;
+    }
+
     private void LoadControls(MonitorSettings settings)
     {
         _loading = true;
@@ -269,8 +279,10 @@ public sealed partial class SettingsWindow : Window
         CacheStatus.Text = "正在清理缓存…";
         try
         {
-            await CacheMaintenance.ClearAsync();
-            if (!_closed) CacheStatus.Text = "已清理未使用的缓存和异常日志；当前运行库将在正常退出后清理。程序可继续使用，设置已保留。";
+            var success = await _runtime.ClearCachesAsync(notify: false);
+            if (!_closed) CacheStatus.Text = success
+                ? "已清理未使用的缓存和异常日志；当前运行库将在正常退出后清理。程序可继续使用，设置已保留。"
+                : "部分缓存暂未清理或已有清理任务，将在正常退出时重试。";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {

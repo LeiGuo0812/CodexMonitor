@@ -58,12 +58,20 @@ internal static class RuntimeVerification
             await Task.Delay(350);
             await runtime.RefreshForVerificationAsync();
             await Task.Delay(250);
-            await CacheMaintenance.ClearAsync();
+            var cleanup = runtime.ClearCachesAsync(notify: false);
+            var busyMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
+            if (!await cleanup) throw new IOException("缓存菜单操作失败。");
+            var idleMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
             var activeBundle = Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory);
             var activePreserved = Directory.Exists(activeBundle);
             report = new
             {
                 Startup = startup,
+                Menu = new { StartupPresent = idleMenu.GetProperty("StartupPresent").GetBoolean(),
+                    CachePresent = idleMenu.GetProperty("CachePresent").GetBoolean(),
+                    CommandsMapped = idleMenu.GetProperty("CommandsMapped").GetBoolean(),
+                    CacheBusyDisabled = busyMenu.GetProperty("CacheDisabled").GetBoolean(),
+                    CacheEnabledAfter = !idleMenu.GetProperty("CacheDisabled").GetBoolean() },
                 Cache = new { ActivePreserved = activePreserved, CleanupRequested = true,
                     Bundled = CacheMaintenance.CacheRoots().Any(root => CacheMaintenance.IsOwnedBundle(root, activeBundle)),
                     ActiveDirectory = activeBundle },
@@ -125,8 +133,25 @@ internal static class RuntimeVerification
             var disabled = original with { StartWithWindows = false };
             runtime.ApplyPreviewSettings(disabled);
             var disableWarning = runtime.CommitSettings(disabled);
-            return new { HostPathRegistered = hostPathRegistered, Disabled = key.GetValue(name) is null,
-                SavedAfterPreview = enableWarning is null && disableWarning is null };
+            var disabledOk = key.GetValue(name) is null;
+            // A menu toggle must not persist an unrelated appearance preview.
+            runtime.OpenSettings();
+            var preview = disabled with { FontSize = disabled.FontSize == 18 ? 17 : 18 };
+            runtime.ApplyPreviewSettings(preview);
+            var menuEnable = runtime.ToggleStartup(notify: false);
+            var enabledMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
+            var preservedDraft = runtime.Settings.FontSize == preview.FontSize;
+            var disk = new SettingsStore().Load();
+            var didNotSavePreview = disk.FontSize == disabled.FontSize && disk.StartWithWindows;
+            runtime.SettingsForVerification!.Close();
+            var cancelKeptStartup = runtime.Settings.StartWithWindows;
+            var menuDisable = runtime.ToggleStartup(notify: false);
+            var disabledMenu = JsonSerializer.SerializeToElement(runtime.ReadMenuVerification());
+            return new { HostPathRegistered = hostPathRegistered, Disabled = disabledOk,
+                SavedAfterPreview = enableWarning is null && disableWarning is null,
+                MenuToggleWorks = menuEnable is null && menuDisable is null && enabledMenu.GetProperty("StartupChecked").GetBoolean()
+                    && !disabledMenu.GetProperty("StartupChecked").GetBoolean() && key.GetValue(name) is null,
+                MenuPreservesDraft = preservedDraft && didNotSavePreview && cancelKeptStartup };
         }
         finally
         {

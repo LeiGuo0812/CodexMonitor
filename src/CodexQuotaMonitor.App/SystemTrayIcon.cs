@@ -16,6 +16,8 @@ internal enum TrayAction
     WarmSandTheme,
     GraphiteTheme,
     MidnightTheme,
+    ToggleStartup,
+    ClearCache,
     Exit
 }
 
@@ -34,12 +36,17 @@ internal sealed class SystemTrayIcon : IDisposable
     private const uint NotifyFlagTip = 4;
     private const uint MenuString = 0x00000000;
     private const uint MenuPopup = 0x00000010;
+    private const uint MenuChecked = 0x00000008;
+    private const uint MenuDisabled = 0x00000001;
+    private const uint MenuSeparator = 0x00000800;
     private const uint TrackRightButton = 0x0002;
     private const uint TrackReturnCommand = 0x0100;
     private const uint ImageIcon = 1;
     private const uint LoadFromFile = 0x0010;
 
     private readonly Action<TrayAction> _onAction;
+    private readonly Func<bool> _startupEnabled;
+    private readonly Func<bool> _cacheBusy;
     private readonly WndProcDelegate _windowProc;
     private readonly string _className = $"CQM.Tray.{Environment.ProcessId}";
     private readonly uint _taskbarCreatedMessage;
@@ -51,9 +58,11 @@ internal sealed class SystemTrayIcon : IDisposable
     private string _tooltip = "Codex 额度监控";
     private bool _disposed;
 
-    public SystemTrayIcon(Action<TrayAction> onAction)
+    public SystemTrayIcon(Action<TrayAction> onAction, Func<bool> startupEnabled, Func<bool> cacheBusy)
     {
         _onAction = onAction;
+        _startupEnabled = startupEnabled;
+        _cacheBusy = cacheBusy;
         _windowProc = WindowProc;
         _taskbarCreatedMessage = RegisterWindowMessage("TaskbarCreated");
         var windowClass = new WindowClassEx
@@ -101,6 +110,21 @@ internal sealed class SystemTrayIcon : IDisposable
 
     public void ShowContextMenu()
     {
+        var menu = BuildContextMenu();
+        uint selected;
+        try
+        {
+            GetCursorPos(out var point);
+            SetForegroundWindow(_hwnd);
+            selected = TrackPopupMenu(menu, TrackRightButton | TrackReturnCommand, point.X, point.Y, 0, _hwnd, IntPtr.Zero);
+            PostMessage(_hwnd, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+        finally { DestroyMenu(menu); }
+        _onAction(ActionForCommand(selected));
+    }
+
+    private IntPtr BuildContextMenu()
+    {
         var menu = CreatePopupMenu();
         var positionMenu = CreatePopupMenu();
         var themeMenu = CreatePopupMenu();
@@ -116,15 +140,15 @@ internal sealed class SystemTrayIcon : IDisposable
         AppendMenu(themeMenu, MenuString, 23, "午夜");
         AppendMenu(menu, MenuPopup, new UIntPtr(unchecked((ulong)positionMenu.ToInt64())), "位置模式");
         AppendMenu(menu, MenuPopup, new UIntPtr(unchecked((ulong)themeMenu.ToInt64())), "主题预设");
+        AppendMenu(menu, MenuSeparator, 0, string.Empty);
+        AppendMenu(menu, MenuString | (_startupEnabled() ? MenuChecked : 0), 30, "开机启动");
+        AppendMenu(menu, MenuString | (_cacheBusy() ? MenuDisabled : 0), 31, _cacheBusy() ? "正在清除缓存…" : "清除缓存");
+        AppendMenu(menu, MenuSeparator, 0, string.Empty);
         AppendMenu(menu, MenuString, 99, "退出");
+        return menu;
+    }
 
-        GetCursorPos(out var point);
-        SetForegroundWindow(_hwnd);
-        var selected = TrackPopupMenu(menu, TrackRightButton | TrackReturnCommand, point.X, point.Y, 0, _hwnd, IntPtr.Zero);
-        PostMessage(_hwnd, 0, IntPtr.Zero, IntPtr.Zero);
-        // DestroyMenu recursively destroys attached submenus.
-        DestroyMenu(menu);
-        _onAction(selected switch
+    private static TrayAction ActionForCommand(uint selected) => selected switch
         {
             1 => TrayAction.OpenDetails,
             2 => TrayAction.Refresh,
@@ -136,9 +160,35 @@ internal sealed class SystemTrayIcon : IDisposable
             21 => TrayAction.WarmSandTheme,
             22 => TrayAction.GraphiteTheme,
             23 => TrayAction.MidnightTheme,
+            30 => TrayAction.ToggleStartup,
+            31 => TrayAction.ClearCache,
             99 => TrayAction.Exit,
             _ => (TrayAction)(-1)
-        });
+        };
+
+    internal object ReadMenuVerification()
+    {
+        var menu = BuildContextMenu();
+        try
+        {
+            var startup = GetMenuState(menu, 30, 0);
+            var cache = GetMenuState(menu, 31, 0);
+            return new { StartupPresent = startup != uint.MaxValue, CachePresent = cache != uint.MaxValue,
+                StartupChecked = (startup & MenuChecked) != 0, CacheDisabled = (cache & MenuDisabled) != 0,
+                CommandsMapped = ActionForCommand(30) == TrayAction.ToggleStartup && ActionForCommand(31) == TrayAction.ClearCache };
+        }
+        finally { DestroyMenu(menu); }
+    }
+
+    public void Notify(string title, string message)
+    {
+        if (_disposed) return;
+        var data = CreateData();
+        data.Flags = 0x10; // NIF_INFO: brief, nonmodal feedback for menu operations.
+        data.InfoTitle = title;
+        data.Info = message;
+        data.InfoFlags = 1;
+        Shell_NotifyIcon(NotifyIconModify, data);
     }
 
     private void AddOrUpdateIcon(uint operation)
@@ -291,6 +341,9 @@ internal sealed class SystemTrayIcon : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool DestroyMenu(IntPtr menu);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetMenuState(IntPtr menu, uint item, uint flags);
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out Point point);

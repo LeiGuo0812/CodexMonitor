@@ -17,6 +17,7 @@ internal static class RuntimeVerification
             runtime.OpenSettings();
             await Task.Delay(200);
             var refreshEditor = await runtime.SettingsForVerification!.VerifyRefreshEditorAsync();
+            var clickActivation = await VerifyClickActivationAsync(runtime);
             runtime.OpenDetails();
             dashboard = runtime.DashboardForVerification!;
             var settingsChecks = new List<object>();
@@ -76,6 +77,7 @@ internal static class RuntimeVerification
             {
                 Startup = startup,
                 RefreshEditor = refreshEditor,
+                ClickActivation = clickActivation,
                 ResourceReuse = new { Rows = rowReuse, Widget = widgetReuse, MinimizedClockStopped = minimizedClockStopped,
                     RestoredClockRunning = restoredClockRunning },
                 Menu = new { StartupPresent = idleMenu.GetProperty("StartupPresent").GetBoolean(),
@@ -123,6 +125,33 @@ internal static class RuntimeVerification
         {
             runtime.ExitApplication();
         }
+    }
+
+    private static async Task<object> VerifyClickActivationAsync(AppRuntime runtime)
+    {
+        var opened = true;
+        var reused = true;
+        var restored = true;
+        // Exercise the native callback path, including the version-4 icon ID in HIWORD.
+        foreach (var message in new uint[] { 0x0202, 0x0203, 0x0400, 0x0401 })
+        {
+            runtime.DashboardForVerification?.Close();
+            runtime.SendTrayActivationForVerification(message);
+            var window = runtime.DashboardForVerification;
+            opened &= window is not null;
+            if (window is null) continue;
+            runtime.SendTrayActivationForVerification(message);
+            reused &= ReferenceEquals(window, runtime.DashboardForVerification);
+            if (window.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
+            {
+                presenter.Minimize();
+                runtime.SendTrayActivationForVerification(message);
+                await Task.Delay(100);
+                restored &= presenter.State != Microsoft.UI.Windowing.OverlappedPresenterState.Minimized;
+            }
+            else restored = false;
+        }
+        return new { AllCallbacksOpen = opened, RepeatedClicksReuse = reused, ClickRestoresMinimized = restored };
     }
 
     private static object VerifyStartup(AppRuntime runtime)

@@ -30,7 +30,6 @@ public sealed partial class WidgetWindow : Window
     private bool _pointerDown;
     private bool _dragging;
     private readonly ShellWindowEvents _shellEvents;
-    private readonly WidgetClickTracker _clickTracker = new();
     private TaskbarAppearance? _appearance;
     private bool? _clearBackground;
     private readonly TransparentWindowSurface _nativeSurface;
@@ -63,7 +62,7 @@ public sealed partial class WidgetWindow : Window
         Surface.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(Surface_PointerReleased), true);
         Surface.PointerCanceled += Surface_PointerCanceled;
         Surface.PointerCaptureLost += Surface_PointerCanceled;
-        Surface.IsDoubleTapEnabled = false; // Use Windows double-click timing for mouse releases.
+        Surface.IsDoubleTapEnabled = false; // Every completed click opens details, including both clicks of a double-click.
         Surface.AddHandler(UIElement.RightTappedEvent, new RightTappedEventHandler(Surface_RightTapped), true);
 
         _shellEvents = new ShellWindowEvents(() =>
@@ -334,7 +333,6 @@ public sealed partial class WidgetWindow : Window
         var dy = (int)Math.Round(current.Y - _lastCursor.Y);
         var threshold = 6 * Math.Max(96, NativeWindowInterop.GetDpiForWindow(WindowNative.GetWindowHandle(this))) / 96.0;
         if (!_dragging && Math.Abs(dx) < threshold && Math.Abs(dy) < threshold) return;
-        _clickTracker.Reset();
         _dragging = true;
         _dragRect.Left += dx;
         _dragRect.Right += dx;
@@ -348,7 +346,7 @@ public sealed partial class WidgetWindow : Window
 
     private void Surface_PointerReleased(object sender, PointerRoutedEventArgs args)
     {
-        if (!_pointerDown) return;
+        if (!_pointerDown || args.GetCurrentPoint(Surface).Properties.PointerUpdateKind != PointerUpdateKind.LeftButtonReleased) return;
         var dragged = _dragging;
         _pointerDown = false;
         _dragging = false;
@@ -358,11 +356,8 @@ public sealed partial class WidgetWindow : Window
             _runtime.UpdateDraggedPosition(_dragRect.Left, _dragRect.Top, _positioner.IsTaskbarSlot);
             return;
         }
-        if (NativeWindowInterop.GetCursorPos(out var cursor) && _clickTracker.Release(cursor.X, cursor.Y,
-            Environment.TickCount64, (int)NativeWindowInterop.GetDoubleClickTime(),
-            Math.Max(2, NativeWindowInterop.GetSystemMetrics(36) / 2),
-            Math.Max(2, NativeWindowInterop.GetSystemMetrics(37) / 2)))
-            _runtime.OpenDetails();
+        args.Handled = true;
+        _runtime.OpenDetails();
     }
 
     internal IntPtr Handle => WindowNative.GetWindowHandle(this);

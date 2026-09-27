@@ -27,6 +27,8 @@ if (!(Test-Path -LiteralPath $report) -or (Get-Item -LiteralPath $report).LastWr
 }
 $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
 if ($result.VerificationError) { throw ('Verification failed: ' + $result.VerificationError) }
+if (!$result.ClickActivation.AllCallbacksOpen -or !$result.ClickActivation.RepeatedClicksReuse -or
+    !$result.ClickActivation.ClickRestoresMinimized) { throw 'Click activation, window reuse or restore failed.' }
 if (!$result.ResourceReuse.Rows.UnchangedReuses -or !$result.ResourceReuse.Rows.ChangedReuses -or
     !$result.ResourceReuse.Rows.RemovedRowsReleased -or !$result.ResourceReuse.Rows.DuplicateCardsPreserved -or
     !$result.ResourceReuse.Widget.BrushesReused -or $result.ResourceReuse.Widget.ExtraMeasurements -gt 1 -or

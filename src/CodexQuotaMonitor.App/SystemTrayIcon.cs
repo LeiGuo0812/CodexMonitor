@@ -24,7 +24,10 @@ internal enum TrayAction
 internal sealed class SystemTrayIcon : IDisposable
 {
     private const uint CallbackMessage = 0x8001;
+    private const uint WmLeftButtonUp = 0x0202;
     private const uint WmLeftButtonDoubleClick = 0x0203;
+    private const uint NinSelect = 0x0400;
+    private const uint NinKeySelect = 0x0401;
     private const uint WmRightButtonUp = 0x0205;
     private const uint WmContextMenu = 0x007B;
     private const uint NotifyIconAdd = 0;
@@ -84,7 +87,6 @@ internal sealed class SystemTrayIcon : IDisposable
             IntPtr.Zero, IntPtr.Zero, windowClass.Instance, IntPtr.Zero);
 
         AddOrUpdateIcon(NotifyIconAdd);
-        Shell_NotifyIcon(NotifyIconVersion, CreateData());
     }
 
     public void Update(MonitorViewState state)
@@ -104,7 +106,8 @@ internal sealed class SystemTrayIcon : IDisposable
         if (message == CallbackMessage)
         {
             var eventCode = unchecked((uint)(lParam.ToInt64() & 0xFFFF));
-            if (eventCode == WmLeftButtonDoubleClick) _onAction(TrayAction.OpenDetails);
+            if (eventCode is WmLeftButtonUp or WmLeftButtonDoubleClick or NinSelect or NinKeySelect)
+                _onAction(TrayAction.OpenDetails);
             else if (eventCode is WmRightButtonUp or WmContextMenu) ShowContextMenu();
         }
         else if (message == _taskbarCreatedMessage)
@@ -221,6 +224,9 @@ internal sealed class SystemTrayIcon : IDisposable
         if (_hwnd == IntPtr.Zero) return;
         LoadIconForTaskbarDpi();
         _lastNotifySucceeded = Shell_NotifyIcon(operation, CreateData());
+        // Explorer restarts discard the callback version; restore it on every registration.
+        if (operation == NotifyIconAdd && _lastNotifySucceeded)
+            Shell_NotifyIcon(NotifyIconVersion, CreateData());
     }
 
     private void LoadIconForTaskbarDpi()
@@ -241,6 +247,9 @@ internal sealed class SystemTrayIcon : IDisposable
 
     internal object ReadVerification() => new { CustomIconLoaded = _ownsIcon && _icon != IntPtr.Zero,
         IconPixels = _iconPixels, Registered = _lastNotifySucceeded };
+
+    internal void SendActivationForVerification(uint eventCode) =>
+        SendMessage(_hwnd, CallbackMessage, IntPtr.Zero, new IntPtr(0x10000 | eventCode));
 
     private NotifyIconData CreateData() => new()
     {
@@ -381,4 +390,7 @@ internal sealed class SystemTrayIcon : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 }

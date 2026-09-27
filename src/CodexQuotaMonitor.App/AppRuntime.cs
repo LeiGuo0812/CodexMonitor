@@ -113,6 +113,7 @@ public sealed class AppRuntime : IDisposable
     internal Task<object> VerifyHoverAsync() => _widget!.VerifyHoverAsync();
     internal object VerifyWidgetResourceReuse() => _widget!.VerifyResourceReuse();
     internal object? ReadTrayVerification() => _tray?.ReadVerification();
+    internal void SendTrayActivationForVerification(uint eventCode) => _tray!.SendActivationForVerification(eventCode);
     internal object? ReadMenuVerification() => _tray?.ReadMenuVerification();
     internal DashboardWindow? DashboardForVerification => _dashboard;
     internal SettingsWindow? SettingsForVerification => _settingsWindow;

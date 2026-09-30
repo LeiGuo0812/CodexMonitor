@@ -380,7 +380,7 @@ LRESULT Application::widgetMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         else if (w == HoverTimer)
         {
             float target = hover_ ? 1.f : 0.f;
-            hoverAmount_ += std::clamp(target - hoverAmount_, -.1f, .1f);
+            hoverAmount_ += std::clamp(target - hoverAmount_, -.14f, .14f);
             drawWidget();
             if (abs(hoverAmount_ - target) < .01f)
                 KillTimer(h, HoverTimer);
@@ -1078,17 +1078,20 @@ void Application::drawWidget()
         widgetCanvas_.border(box(1, 1, w - 2, h - 2), color(taskbarDark_ ? L"#91C5FF" : L"#286DB7"), 11,
                              1.5f);
     if (hoverAmount_ > 0)
-    {
-        if (contrast_)
-            widgetCanvas_.border(box(3.5f, 3.5f, w - 7, h - 7), alpha(primary, hoverAmount_), 6);
-        else
-            widgetCanvas_.lightbox(box(3.5f, 3.5f, w - 7, h - 7), hoverAmount_, taskbarDark_);
-    }
+        widgetCanvas_.rect(box(1, 1, w - 2, h - 2),
+                           color(L"#FFFFFF", hoverAmount_ * (taskbarDark_ ? .19f : .37f)), 6);
     if (docked_)
     {
         for (float cx : {3.5f, w - 3.5f})
         {
             widgetCanvas_.line(cx, 7, cx, h - 7, alpha(primary, .25f * (1 - hoverAmount_)));
+            if (hoverAmount_ > 0)
+            {
+                auto glow = taskbarDark_ ? color(L"#DFEDFF") : color(L"#FFFFFF");
+                widgetCanvas_.spindle(cx, 5, h - 10, 7, alpha(glow, .078f * hoverAmount_));
+                widgetCanvas_.spindle(cx, 5, h - 10, 4, alpha(glow, .125f * hoverAmount_));
+                widgetCanvas_.spindle(cx, 5, h - 10, 2, alpha(glow, .549f * hoverAmount_));
+            }
         }
     }
     auto q = state_.selected;
@@ -2544,7 +2547,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.3"},
+    Json j = {{"version", "2.0.2"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},

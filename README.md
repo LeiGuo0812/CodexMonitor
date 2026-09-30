@@ -2,7 +2,7 @@
 
 Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已改为 **C++20 + Win32 + DirectWrite / Direct2D**，界面和数据层均为原生实现。
 
-> 当前版本 **v2.0.3**：C++／Win32／DirectWrite／Direct2D 原生单文件版。任务栏文字悬停采用灯箱式亮边、柔光和渐变背光，并适配深浅任务栏。
+> 当前版本 **v2.0.2**：C++／Win32／DirectWrite／Direct2D 原生单文件版。修复点击任务栏“显示桌面”及恢复窗口时数字条短暂消失的问题；保留完整的设置控件主题适配。
 
 ## 运行
 
@@ -14,12 +14,12 @@ Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已�
 
 ## 下载
 
-[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.3/CodexMonitor-v2.0.3-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.3)
+[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.2/CodexMonitor-v2.0.2-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.2)
 
 ## 迁移功能
 
 - 两行数字条：剩余额度与自然重置倒计时；5 小时额度优先，耗尽时仍显示 0%。字段暂缺不会误判为该额度不存在。
-- 透明任务栏背景、两侧边线、统一蓝色“周 / 5h”标签和固定圆点、悬停灯箱背光、原有 Q 图标。
+- 透明任务栏背景、两侧边线、统一蓝色“周 / 5h”标签和固定圆点、悬停梭形柔光、原有 Q 图标。
 - 自动、任务栏优先、固定上移模式；任意横向位置拖入任务栏达到 8 DIP 重叠深度即显示蓝色吸附提示，松手后落入最近的安全空位，保存相对偏移；全屏隐藏、任务栏变化检查、Explorer 重建通知。
 - 任务视图等入口重排任务栏时，检查实际遮挡者，仅对任务栏覆盖数字条的情况恢复层级；保留位置和焦点，合并重复系统事件。系统宿主进程名大小写不影响全屏判断。
 - 紧凑详情窗口，弹出时下缘贴任务栏上缘；系统 Acrylic、统一自绘标题栏、10 DIP 进度条及首次数据加载动画。

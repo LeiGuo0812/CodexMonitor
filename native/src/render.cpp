@@ -115,6 +115,8 @@ Canvas::~Canvas()
 }
 void Canvas::reset()
 {
+    lightboxFace_.Reset();
+    lightboxRim_.Reset();
     brush_.Reset();
     windowTarget_.Reset();
     dcTarget_.Reset();
@@ -261,26 +263,53 @@ void Canvas::progress(D2D1_RECT_F r, std::optional<double> value, Color fill, Co
         rect(f, fill, 5);
     }
 }
-void Canvas::spindle(float cx, float y, float height, float width, Color tint)
+void Canvas::lightbox(D2D1_RECT_F r, float amount, bool dark)
 {
-    ComPtr<ID2D1PathGeometry> path;
-    check(drawing_.factory()->CreatePathGeometry(&path));
-    ComPtr<ID2D1GeometrySink> sink;
-    check(path->Open(&sink));
-    sink->BeginFigure({cx, y}, D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddBezier({{cx + width * .1f, y + height * .16f},
-                     {cx + width * .5f, y + height * .31f},
-                     {cx + width * .5f, y + height * .5f}});
-    sink->AddBezier(
-        {{cx + width * .5f, y + height * .69f}, {cx + width * .1f, y + height * .84f}, {cx, y + height}});
-    sink->AddBezier({{cx - width * .1f, y + height * .84f},
-                     {cx - width * .5f, y + height * .69f},
-                     {cx - width * .5f, y + height * .5f}});
-    sink->AddBezier({{cx - width * .5f, y + height * .31f}, {cx - width * .1f, y + height * .16f}, {cx, y}});
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    check(sink->Close());
-    brush_->SetColor(tint);
-    target_->FillGeometry(path.Get(), brush_.Get());
+    if (!target_ || amount <= 0)
+        return;
+    amount = std::clamp(amount, 0.f, 1.f);
+    float fade = amount * amount * (3 - 2 * amount);
+    const auto white = D2D1::ColorF(D2D1::ColorF::White);
+    // Keep brushes with this render target; hover frames only change their
+    // geometry and opacity, without creating blur surfaces or path geometries.
+    if (!lightboxFace_)
+    {
+        D2D1_GRADIENT_STOP stops[] = {{0, alpha(white, 1)}, {.55f, alpha(white, .55f)},
+                                     {1, alpha(white, 0)}};
+        ComPtr<ID2D1GradientStopCollection> collection;
+        check(target_->CreateGradientStopCollection(stops, (UINT32)std::size(stops),
+                                                    D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &collection));
+        check(target_->CreateRadialGradientBrush(
+            D2D1::RadialGradientBrushProperties({0, 0}, {0, 0}, 1, 1), collection.Get(), &lightboxFace_));
+    }
+    if (!lightboxRim_)
+    {
+        D2D1_GRADIENT_STOP stops[] = {{0, alpha(white, 1)}, {.42f, alpha(white, .38f)},
+                                     {.65f, alpha(white, .25f)}, {1, alpha(white, .78f)}};
+        ComPtr<ID2D1GradientStopCollection> collection;
+        check(target_->CreateGradientStopCollection(stops, (UINT32)std::size(stops),
+                                                    D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &collection));
+        check(target_->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties({0, 0}, {0, 1}), collection.Get(), &lightboxRim_));
+    }
+    float width = r.right - r.left, height = r.bottom - r.top;
+    auto rounded = D2D1::RoundedRect(r, 6, 6);
+    // Wide, low-opacity halos fade into the existing taskbar. All layers add
+    // light, including on a light taskbar; no shadow tint darkens the surface.
+    for (auto layer : {std::pair{7.f, .018f}, std::pair{4.f, .035f}, std::pair{2.f, .06f}})
+    {
+        brush_->SetColor(alpha(white, layer.second * fade * (dark ? 1.f : 1.5f)));
+        target_->DrawRoundedRectangle(rounded, brush_.Get(), layer.first);
+    }
+    lightboxFace_->SetCenter({r.left + width * .5f, r.top + height * .48f});
+    lightboxFace_->SetRadiusX(width * .65f);
+    lightboxFace_->SetRadiusY(height * .85f);
+    lightboxFace_->SetOpacity(fade * (dark ? .15f : .34f));
+    target_->FillRoundedRectangle(rounded, lightboxFace_.Get());
+    lightboxRim_->SetStartPoint({0, r.top});
+    lightboxRim_->SetEndPoint({0, r.bottom});
+    lightboxRim_->SetOpacity(fade * (dark ? .48f : .7f));
+    target_->DrawRoundedRectangle(rounded, lightboxRim_.Get(), .9f);
 }
 void Canvas::clip(D2D1_RECT_F r)
 {

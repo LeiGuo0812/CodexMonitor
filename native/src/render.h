@@ -43,6 +43,8 @@ class Canvas
     ComPtr<ID2D1HwndRenderTarget> windowTarget_;
     ComPtr<ID2D1DCRenderTarget> dcTarget_;
     ComPtr<ID2D1SolidColorBrush> brush_;
+    ComPtr<ID2D1RadialGradientBrush> lightboxFace_;
+    ComPtr<ID2D1LinearGradientBrush> lightboxRim_;
     ID2D1RenderTarget *target_ = nullptr;
     HWND hwnd_ = nullptr;
     HDC dc_ = nullptr;
@@ -67,7 +69,7 @@ class Canvas
     void line(float x, float y, float x2, float y2, Color color, float width = 1);
     void progress(D2D1_RECT_F rect, std::optional<double> value, Color fill, Color track,
                   float animation = 1);
-    void spindle(float center, float top, float height, float width, Color tint);
+    void lightbox(D2D1_RECT_F rect, float amount, bool dark);
     void clip(D2D1_RECT_F r);
     void unclip();
 };

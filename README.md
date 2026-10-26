@@ -2,7 +2,7 @@
 
 Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已改为 **C++20 + Win32 + DirectWrite / Direct2D**，界面和数据层均为原生实现。
 
-> 当前版本 **v2.0.2**：C++／Win32／DirectWrite／Direct2D 原生单文件版。修复点击任务栏“显示桌面”及恢复窗口时数字条短暂消失的问题；保留完整的设置控件主题适配。
+> 当前版本 **v2.0.4**：C++／Win32／DirectWrite／Direct2D 原生单文件版。修复新版 Codex 账户资料接口超时导致额度无法获取的问题，优先读取带账户标识的额度快照，并兼容旧版接口。
 
 ## 运行
 
@@ -14,7 +14,7 @@ Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已�
 
 ## 下载
 
-[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.2/CodexMonitor-v2.0.2-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.2)
+[下载 Windows x64 单文件程序](https://github.com/LeiGuo0812/CodexMonitor/releases/download/v2.0.4/CodexMonitor-v2.0.4-win-x64.exe) · [Release 与 SHA-256 校验文件](https://github.com/LeiGuo0812/CodexMonitor/releases/tag/v2.0.4)
 
 ## 迁移功能
 
@@ -52,7 +52,7 @@ Windows 11 的 Codex 额度与重置时间监控工具。当前开发分支已�
 
 ## 数据与进程
 
-程序通过现有 Codex CLI 的只读 `app-server` 接口初始化、查询账户和额度，复用 Codex 登录机制，不读取或复制认证文件、不兑换重置卡、不创建模型任务。
+程序通过现有 Codex CLI 的只读 `app-server` 接口初始化、查询额度，优先使用额度响应附带的账户标识；旧版接口未提供该标识时，再读取账户资料。账户资料的工作区路由请求超时不再阻止新版接口查询额度。程序复用 Codex 登录机制，不读取或复制认证文件、不兑换重置卡、不创建模型任务。
 
 每次查询使用短生命周期子进程。标准输出有大小上限，错误输出丢弃，查询有超时；使用独立 Job Object 管理自己启动的进程，退出时清理。界面进程降内存不代表 Codex CLI 查询进程的峰值也会下降。
 

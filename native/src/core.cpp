@@ -196,10 +196,11 @@ std::wstring Credit::validity() const
     return countdown(expires) + L"后到期\n" + readable(expires) +
            (label == L"可用" ? L" 前可用" : L" · " + label);
 }
-std::string fingerprint(std::string value)
+std::string fingerprint(std::string value, bool normalizeCase)
 {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return (char)tolower(c); });
+    if (normalizeCase)
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return (char)tolower(c); });
     unsigned char bytes[32]{};
     if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, (PUCHAR)value.data(), (ULONG)value.size(), bytes,
                    32) < 0)
@@ -217,13 +218,13 @@ Query parseReplies(const Json &accountReply, const Json &limits)
 {
     Query q;
     q.retrieved = now();
-    if (accountReply.contains("error"))
-    {
-        q.error = "ACCOUNT_ERROR";
-        return q;
-    }
-    auto a = accountReply.value("result", Json::object()).value("account", Json());
-    if (!a.is_object() || str(a, "type") != "chatgpt")
+    Json a;
+    if (accountReply.is_object() && accountReply.contains("result") && accountReply["result"].is_object())
+        a = accountReply["result"].value("account", Json());
+    const bool accountError = accountReply.contains("error");
+    // An explicit logged-out or non-subscription account remains authoritative.
+    // A null reply means the optional account/profile request was not made.
+    if (!accountReply.is_null() && !accountError && (!a.is_object() || str(a, "type") != "chatgpt"))
     {
         q.error = "CHATGPT_AUTH_REQUIRED";
         return q;
@@ -243,6 +244,24 @@ Query parseReplies(const Json &accountReply, const Json &limits)
         q.error = "RATE_LIMIT_RESPONSE_MISSING";
         return q;
     }
+    // Newer Codex versions return the authenticated account identity with the
+    // usage snapshot. Profile reads can fail independently during workspace
+    // routing discovery, and must not prevent displaying that snapshot.
+    auto accountId = str(r, "accountId");
+    if (accountId.find_first_not_of(" \t\r\n") != std::string::npos)
+        q.account = fingerprint("chatgpt-account\n" + accountId, false);
+    else if (accountError)
+    {
+        q.error = "ACCOUNT_ERROR";
+        return q;
+    }
+    else if (accountReply.is_null())
+    {
+        q.error = "ACCOUNT_IDENTITY_UNAVAILABLE";
+        return q;
+    }
+    if (q.plan.empty() && r.contains("rateLimits"))
+        q.plan = str(r["rateLimits"], "planType");
     Json buckets;
     if (r.contains("rateLimitsByLimitId") && r["rateLimitsByLimitId"].is_object())
         buckets = r["rateLimitsByLimitId"];

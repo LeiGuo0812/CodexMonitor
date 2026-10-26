@@ -179,6 +179,64 @@ int main()
         missingAccount["result"]["account"] = nullptr;
         require(parseReplies(missingAccount, limits).error == "CHATGPT_AUTH_REQUIRED",
                 "Null account requires login");
+        auto modern = limits;
+        modern["result"]["accountId"] = "Account-A";
+        modern["result"]["rateLimits"]["planType"] = "pro";
+        auto snapshot = parseReplies(Json(), modern);
+        require(snapshot.success && !snapshot.account.empty() && snapshot.plan == "pro" &&
+                    snapshot.windows.size() == 3 && snapshot.creditCount == 4,
+                "Authenticated usage snapshot works without a profile request");
+        Json profileError = {
+            {"error", {{"code", -32603}, {"message", "workspace routing discovery timed out"}}}};
+        require(parseReplies(profileError, modern).success,
+                "Workspace routing profile failure does not discard authenticated usage");
+        require(parseReplies(account, modern).account == snapshot.account,
+                "Snapshot identity is consistent with and without a profile");
+        auto nullableProfile = account;
+        nullableProfile["result"]["account"]["email"] = nullptr;
+        nullableProfile["result"]["account"]["planType"] = nullptr;
+        auto nullable = parseReplies(nullableProfile, modern);
+        require(nullable.success && nullable.account == snapshot.account && nullable.plan == "pro",
+                "Nullable profile email and plan use snapshot identity and plan");
+        modern["result"]["rateLimits"]["planType"] = nullptr;
+        nullable = parseReplies(Json(), modern);
+        require(nullable.success && nullable.plan.empty(), "Nullable snapshot plan is safe");
+        require(parseReplies(missingAccount, modern).error == "CHATGPT_AUTH_REQUIRED",
+                "Explicit logout overrides a usage snapshot");
+        auto apiKey = account;
+        apiKey["result"]["account"] = {{"type", "apiKey"}};
+        require(parseReplies(apiKey, modern).error == "CHATGPT_AUTH_REQUIRED",
+                "Explicit non-subscription auth cannot reuse subscription usage");
+        require(parseReplies(Json(), limits).error == "ACCOUNT_IDENTITY_UNAVAILABLE",
+                "Legacy usage requires the separate profile fallback");
+        require(parseReplies(account, limits).account == fingerprint("chatgpt\ntest@example.invalid"),
+                "Legacy email-based account identity remains compatible");
+        require(parseReplies(profileError, limits).error == "ACCOUNT_ERROR",
+                "Profile error without snapshot identity remains a failed query");
+        auto failedUsage = Json{{"error", {{"code", -32603}}}};
+        auto identifiedFailure = parseReplies(account, failedUsage);
+        require(!identifiedFailure.success &&
+                    identifiedFailure.account == fingerprint("chatgpt\ntest@example.invalid"),
+                "Usage error preserves a known profile identity for account isolation");
+        require(parseReplies(missingAccount, failedUsage).error == "CHATGPT_AUTH_REQUIRED",
+                "Usage failure still honors an explicit signed-out profile");
+        for (auto id : {Json(), Json(42), Json::object(), Json(""), Json(" \t\r\n")})
+        {
+            auto invalid = modern;
+            invalid["result"]["accountId"] = id;
+            require(parseReplies(Json(), invalid).error == "ACCOUNT_IDENTITY_UNAVAILABLE",
+                    "Invalid snapshot identity requires profile fallback");
+        }
+        State snapshotState;
+        snapshotState.apply(snapshot);
+        auto anotherAccount = modern;
+        anotherAccount["result"]["accountId"] = "account-a";
+        anotherAccount["result"]["rateLimitResetCredits"]["credits"] = nullptr;
+        auto switchedSnapshot = parseReplies(Json(), anotherAccount);
+        require(switchedSnapshot.account != snapshot.account, "Opaque snapshot identities preserve case");
+        snapshotState.apply(switchedSnapshot);
+        require(snapshotState.data.credits.empty() && !snapshotState.creditDetailsStale,
+                "A changed snapshot account never inherits reset credit details");
         Settings s;
         require(s.refresh == 60, "Default refresh is one minute");
         s.position = 1;

@@ -467,31 +467,21 @@ Query queryCodex(const std::wstring &configured, const std::atomic_bool &stop)
             q.error = "CODEX_NOT_A_CLI";
             return q;
         }
-        Process process(chosen, L"app-server", stop, budget(20000));
+        Process process(chosen, L"app-server", stop, budget(30000));
         auto init = process.request(
             1, "initialize",
             {{"clientInfo",
-              {{"name", "codex_quota_monitor"}, {"title", "Codex Quota Monitor"}, {"version", "2.0.2"}}}});
+              {{"name", "codex_quota_monitor"}, {"title", "Codex Quota Monitor"}, {"version", "2.0.4"}}}});
         if (init.contains("error"))
             throw std::runtime_error("INITIALIZE_FAILED");
         process.write({{"method", "initialized"}});
-        auto account = process.request(2, "account/read", {{"refreshToken", false}});
-        if (account.contains("error"))
-        {
-            q.error = "ACCOUNT_ERROR";
+        auto limits = process.request(3, "account/rateLimits/read");
+        q = parseReplies(Json(), limits);
+        if (q.error != "ACCOUNT_IDENTITY_UNAVAILABLE" && !limits.contains("error"))
             return q;
-        }
-        auto result = account.value("result", Json::object()).value("account", Json());
-        if (!result.is_object() || result.value("type", "") != "chatgpt")
-        {
-            q.error = "CHATGPT_AUTH_REQUIRED";
-            return q;
-        }
-        auto email = result.value("email", std::string{});
-        if (!email.empty())
-            q.account = fingerprint("chatgpt\n" + email);
-        q.plan = result.value("planType", std::string{});
-        return parseReplies(account, process.request(3, "account/rateLimits/read"));
+        // Older servers need the profile for account isolation. After a usage
+        // RPC error, also check whether the user explicitly signed out.
+        return parseReplies(process.request(2, "account/read", {{"refreshToken", false}}), limits);
     }
     catch (const Json::exception &)
     {
@@ -705,8 +695,7 @@ void writeDiagnostic(const std::string &code) noexcept
         auto dir = settingsDirectory();
         fs::create_directories(dir);
         std::ofstream out(dir / L"native-failure.json");
-        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.2"}}
-                   .dump(2);
+        out << Json{{"time", now()}, {"code", code.substr(0, 128)}, {"version", "2.0.4"}}.dump(2);
     }
     catch (...)
     {

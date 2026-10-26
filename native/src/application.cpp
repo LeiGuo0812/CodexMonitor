@@ -2547,7 +2547,7 @@ void Application::finishVerification()
     GetWindowRect(widget_, &widget);
     if (details_.hwnd)
         GetWindowRect(details_.hwnd, &details);
-    Json j = {{"version", "2.0.2"},
+    Json j = {{"version", "2.0.4"},
               {"querySucceeded", state_.updated != 0},
               {"queryError", state_.error},
               {"refreshing", state_.refreshing},
